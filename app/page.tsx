@@ -54,7 +54,7 @@ export default function MenuPrincipal() {
               🏑
             </div>
             <h3 className="font-bold text-sm text-neutral-100 group-hover:text-emerald-400 transition-colors">
-              Catálogo Vistas
+              Catálogo Ejercicios
             </h3>
             <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
               Cargá ejercicios con clasificación por rubros y multimedia.
@@ -67,7 +67,7 @@ export default function MenuPrincipal() {
               👥
             </div>
             <h3 className="font-bold text-sm text-neutral-100 group-hover:text-emerald-400 transition-colors">
-              Fichaje Alumnos
+              Registro Jugadores
             </h3>
             <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
               Registrá arqueros vinculados a tus clubes oficiales.
@@ -80,7 +80,7 @@ export default function MenuPrincipal() {
               📋
             </div>
             <h3 className="font-bold text-sm text-neutral-100 group-hover:text-emerald-400 transition-colors">
-              Planificar Sesión
+              Planificar Entrenamiento
             </h3>
             <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
               Armá la rutina diaria con control de asistencia automatizado.
@@ -93,7 +93,7 @@ export default function MenuPrincipal() {
               📜
             </div>
             <h3 className="font-bold text-sm text-neutral-100 group-hover:text-emerald-400 transition-colors">
-              Historial Anual
+              Historial Temporada
             </h3>
             <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
               Auditá entrenamientos pasados, minutos y ausencias.
@@ -106,7 +106,7 @@ export default function MenuPrincipal() {
               ⚙️
             </div>
             <h3 className="font-bold text-sm text-neutral-100 group-hover:text-emerald-400 transition-colors">
-              Datos Maestros
+              Gestion de Datos
             </h3>
             <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
               Gestioná tus listas oficiales de Clubes, Categorías y Rubros.
@@ -117,7 +117,7 @@ export default function MenuPrincipal() {
 
         {/* Pie de página */}
         <div className="mt-12 text-xs text-neutral-600 border-t border-neutral-800/60 pt-6">
-          Training Keeper App v1.2 — Sistema de Alto Rendimiento para Porteros
+          Training Keeper App v1.3 — Sistema para Entrenadores de Arqueros
         </div>
 
       </div>

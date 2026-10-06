@@ -1,9 +1,25 @@
 'use client';
-
+import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { supabase } from '@/supabaseClient'; // ← El arroba (@) buscará el archivo que acabamos de crear en la raíz
+import { supabase } from '@/supabaseClient'; 
 
 export default function PlanificacionKeeper() {
+  const router = useRouter();
+  const [autenticado, setAutenticado] = useState(false);
+
+  // EFECTO DE SEGURIDAD: Verificar sesión activa antes de cargar el resto de la pantalla
+  useEffect(() => {
+    const chequearSesion = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push('/login');
+      } else {
+        setAutenticado(true);
+      }
+    };
+    chequearSesion();
+  }, [router]);
+
   // Datos principales de la sesión
   const [entrenamiento, setEntrenamiento] = useState({
     numero: '',
@@ -29,7 +45,7 @@ export default function PlanificacionKeeper() {
   // EFECTO 1: Descargar catálogos iniciales al abrir la pantalla
   useEffect(() => {
     const descargarCatalogosBase = async () => {
-      const { data: ejs } = await supabase.from('ejercicios').select('id, codigo, nombre').order('codigo', { ascending: true });
+      const { data: ejs } = await supabase.from('ejercicios').select('id, codigo, nombre, desarrollo, multimedia_url').order('codigo', { ascending: true });
       const { data: clubs } = await supabase.from('clubes').select('*').order('nombre', { ascending: true });
       const { data: cats } = await supabase.from('categorias').select('*').order('nombre', { ascending: true });
 
@@ -52,8 +68,13 @@ export default function PlanificacionKeeper() {
           .eq('division', entrenamiento.division.trim().toUpperCase())
           .eq('estado', 'Activo');
 
-        if (!error && data) {
+        if (!error && data && data.length > 0) {
           setListaAlumnos(data.map(j => ({ id: j.id, nombre: j.nombre_completo, presente: true })));
+        } else {
+          setListaAlumnos([
+            { id: 'mock-1', nombre: 'Arquero de Prueba 1 (Simulado)', presente: true },
+            { id: 'mock-2', nombre: 'Arquero de Prueba 2 (Simulado)', presente: true }
+          ]);
         }
       } else {
         setListaAlumnos([]);
@@ -62,10 +83,11 @@ export default function PlanificacionKeeper() {
     buscarPlantelReal();
   }, [entrenamiento.club, entrenamiento.categoria, entrenamiento.division]);
 
-  // Manejador genérico para inputs, textareas y selectores corregido
+  // Manejador genérico para inputs, textareas y selectores
   const handleHeaderChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setEntrenamiento({ ...entrenamiento, [e.target.name]: e.target.value });
   };
+  
   // Funciones para manipular la rutina interactiva
   const agregarEjercicio = (id: string) => {
     const ej = ejerciciosCatalogo.find(e => e.id === id);
@@ -85,6 +107,15 @@ export default function PlanificacionKeeper() {
   const toggleAsistencia = (id: string) => {
     setListaAlumnos(listaAlumnos.map(a => a.id === id ? { ...a, presente: !a.presente } : a));
   };
+
+  // Si todavía está verificando el estado Auth de Supabase, frena la carga del HTML
+  if (!autenticado) {
+    return (
+      <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-xs text-neutral-500">
+        Verificando credenciales de acceso...
+      </div>
+    );
+  }
 
   // ENVÍO MASIVO MULTITABLA A SUPABASE
   const handleSubmit = async (e: React.FormEvent) => {
@@ -140,6 +171,7 @@ export default function PlanificacionKeeper() {
       setMensaje({ tipo: 'error', texto: `Error: ${error.message || 'Verifique duplicados.'}` });
     } finally { setCargando(false); }
   };
+
   return (
     <div className="min-h-screen bg-neutral-950 text-white p-6 font-sans">
       <div className="max-w-4xl mx-auto bg-neutral-900 border border-neutral-800 rounded-xl p-8 shadow-2xl">
@@ -164,14 +196,13 @@ export default function PlanificacionKeeper() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
           
-          {/* BLOQUE DE FILTROS TOTALMENTE ENLAZADO */}
+          {/* BLOQUE DE FILTROS */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 bg-neutral-950 p-6 rounded-xl border border-neutral-800">
             <div>
               <label className="block text-xs text-neutral-400 mb-2">Entrenamiento Nº</label>
               <input type="number" name="numero" required value={entrenamiento.numero} onChange={handleHeaderChange} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm focus:outline-none" />
             </div>
             
-            {/* SELECTOR DE CLUB */}
             <div>
               <label className="block text-xs text-neutral-400 mb-2">Club</label>
               <select name="club" required value={entrenamiento.club} onChange={handleHeaderChange} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm text-neutral-300 focus:outline-none focus:border-emerald-500">
@@ -179,96 +210,145 @@ export default function PlanificacionKeeper() {
                 {clubesDB.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
               </select>
             </div>
-            
-            {/* SELECTOR DE CATEGORÍA */}
+
             <div>
               <label className="block text-xs text-neutral-400 mb-2">Categoría</label>
               <select name="categoria" required value={entrenamiento.categoria} onChange={handleHeaderChange} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm text-neutral-300 focus:outline-none focus:border-emerald-500">
                 <option value="">Seleccionar...</option>
-                {categoriasDB.map(cat => <option key={cat.id} value={cat.nombre}>{cat.nombre}</option>)}
+                {categoriasDB.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
               </select>
             </div>
-            
-            {/* INPUT DE DIVISIÓN */}
+
             <div>
               <label className="block text-xs text-neutral-400 mb-2">División</label>
-              <input type="text" name="division" required placeholder="Ej: B" value={entrenamiento.division} onChange={handleHeaderChange} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm focus:outline-none" />
+              <input type="text" name="division" required placeholder="Ej: A, B, UNICA" value={entrenamiento.division} onChange={handleHeaderChange} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm focus:outline-none" />
             </div>
           </div>
 
-          {/* Objetivo Principal */}
-          <div>
-            <label className="block text-xs text-neutral-400 mb-2">Objetivo Principal</label>
-            <input type="text" name="objetivo" required value={entrenamiento.objetivo} onChange={handleHeaderChange} placeholder="Ej: Velocidad gestual" className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none" />
-          </div>
-
-          {/* Catálogo y Cronograma */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800">
-              <div className="text-xs font-semibold text-neutral-400 uppercase mb-2">Catálogo</div>
-              {ejerciciosCatalogo.length === 0 ? (
-                <div className="text-neutral-600 text-xs py-2">No hay ejercicios en la base.</div>
-              ) : (
-                ejerciciosCatalogo.map(ej => (
-                  <button type="button" key={ej.id} onClick={() => agregarEjercicio(ej.id)} className="w-full text-left bg-neutral-900 border border-neutral-800 p-3 rounded-lg text-xs mb-2 flex justify-between">
-                    <span>[{ej.codigo}] {ej.nombre}</span>
-                    <span className="text-emerald-400 font-bold">+</span>
-                  </button>
-                ))
-              )}
+          {/* OBJETIVOS Y OBSERVACIONES */}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs text-neutral-400 mb-1">Objetivos de la Sesión</label>
+              <textarea name="objetivo" required value={entrenamiento.objetivo} onChange={handleHeaderChange} rows={2} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-sm focus:outline-none focus:border-emerald-500" placeholder="Escribí los objetivos principales..." />
             </div>
-
-            <div className="md:col-span-2 bg-neutral-950 p-4 rounded-xl border border-neutral-800">
-              <div className="text-xs font-semibold text-neutral-400 uppercase mb-2">Cronograma</div>
-              {ejerciciosSeleccionados.length === 0 ? (
-                <div className="text-neutral-500 text-xs py-4 text-center">Selecciona de la izquierda.</div>
-              ) : (
-                ejerciciosSeleccionados.map((ej, index) => (
-                  <div key={ej.id} className="bg-neutral-900 border border-neutral-800 p-3 rounded-lg flex items-center justify-between mb-2 text-xs">
-                    <span>{index + 1}. {ej.nombre}</span>
-                    <div className="flex items-center gap-2">
-                      <input type="number" value={ej.duracion} min="1" onChange={(e) => handleDuracionChange(ej.id, parseInt(e.target.value) || 0)} className="w-12 bg-neutral-950 border border-neutral-800 rounded text-center text-emerald-400" />
-                      <button type="button" onClick={() => removerEjercicio(ej.id)} className="text-neutral-500 hover:text-red-400">✕</button>
-                    </div>
-                  </div>
-                ))
-              )}
+            <div>
+              <label className="block text-xs text-neutral-400 mb-1">Observaciones Generales</label>
+              <textarea name="observaciones" value={entrenamiento.observaciones} onChange={handleHeaderChange} rows={2} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-sm focus:outline-none focus:border-emerald-500" placeholder="Notas sobre el clima, la cancha o novedades..." />
             </div>
           </div>
-
-          {/* Asistencia Automática */}
-          <div className="bg-neutral-950 p-6 rounded-xl border border-neutral-800">
-            <div className="text-emerald-500 font-semibold text-xs uppercase mb-3">Asistencia Automática</div>
-            {listaAlumnos.length === 0 ? (
-              <div className="text-neutral-500 text-xs text-center py-2">Escribí los datos del plantel arriba para enlazar las jugadoras.</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {listaAlumnos.map(al => (
-                  <div key={al.id} className="bg-neutral-900 border border-neutral-800 p-3 rounded-lg flex justify-between items-center text-xs">
-                    <span>{al.nombre}</span>
-                    <button type="button" onClick={() => toggleAsistencia(al.id)} className="text-xs font-bold px-3 py-1 rounded border border-neutral-700 bg-neutral-800">
-                      {al.presente ? 'PRESENTE ✅' : 'AUSENTE ❌'}
-                    </button>
+          {/* CUERPO DEL ARMADO: CATÁLOGO IZQUIERDA Y RUTINA DERECHA */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            {/* PANEL IZQUIERDO: CATÁLOGO DE EJERCICIOS */}
+            <div className="bg-neutral-950 border border-neutral-800 p-4 rounded-xl flex flex-col">
+              <h3 className="text-sm font-semibold text-neutral-300 mb-3 uppercase tracking-wider">
+                Catálogo de Ejercicios ({ejerciciosCatalogo.length})
+              </h3>
+              
+              <div className="max-h-[450px] overflow-y-auto pr-1 space-y-2">
+                {ejerciciosCatalogo.map((ej) => (
+                  <div 
+                    key={ej.id} 
+                    onClick={() => agregarEjercicio(ej.id)}
+                    className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg hover:border-emerald-500 cursor-pointer transition-colors text-xs flex justify-between items-center group"
+                  >
+                    <span className="text-neutral-300 group-hover:text-emerald-400 transition-colors">
+                      <strong className="text-neutral-500 font-medium mr-1">[{ej.codigo}]</strong> {ej.nombre}
+                    </span>
+                    <span className="text-emerald-400 font-bold text-base px-1">+</span>
                   </div>
                 ))}
               </div>
-            )}
+            </div>
+
+            {/* PANEL DERECHO: RUTINA SELECCIONADA */}
+            <div className="bg-neutral-950 border border-neutral-800 p-4 rounded-xl flex flex-col">
+              <h3 className="text-sm font-semibold text-neutral-300 mb-3 uppercase tracking-wider">
+                Rutina del Entrenamiento ({ejerciciosSeleccionados.length})
+              </h3>
+
+              <div className="space-y-2 max-h-[450px] overflow-y-auto pr-1">
+                {ejerciciosSeleccionados.length === 0 ? (
+                  <div className="text-neutral-500 text-xs py-8 text-center">Seleccioná ejercicios de la lista izquierda.</div>
+                ) : (
+                  ejerciciosSeleccionados.map((ej, index) => (
+                    <div key={ej.id} className="bg-neutral-900 border border-neutral-800 p-3 rounded-lg mb-2 text-xs flex flex-col gap-2">
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-medium text-neutral-200">
+                          <strong className="text-emerald-400 mr-1">{index + 1}.</strong> {ej.nombre}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <input 
+                            type="number" 
+                            value={ej.duracion} 
+                            min="1" 
+                            onChange={(e) => handleDuracionChange(ej.id, parseInt(e.target.value) || 0)} 
+                            className="w-10 bg-neutral-950 border border-neutral-800 rounded text-center text-emerald-400 py-0.5 text-xs focus:outline-none" 
+                          />
+                          <span className="text-neutral-500 text-[10px] mr-1">min</span>
+                          <button type="button" onClick={() => removerEjercicio(ej.id)} className="text-neutral-500 hover:text-red-400 p-1">✕</button>
+                        </div>
+                      </div>
+
+                      {(ej.desarrollo || ej.multimedia_url) && (
+                        <div className="bg-neutral-950/70 border border-neutral-800/40 p-2.5 rounded text-neutral-400 leading-relaxed whitespace-pre-line text-[11px] flex flex-col gap-2">
+                          {ej.desarrollo && (
+                            <div>
+                              <span className="text-neutral-600 block text-[9px] font-bold uppercase tracking-wider mb-0.5">Desarrollo:</span>
+                              {ej.desarrollo}
+                            </div>
+                          )}
+
+                          {ej.multimedia_url && (
+                            <div className="pt-1.5 border-t border-neutral-800/60 flex justify-end">
+                              <a 
+                                href={ej.multimedia_url} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded text-[10px] font-semibold transition-colors flex items-center gap-1 uppercase tracking-wider"
+                              >
+                                📺 Ver Ejercicio
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
 
-          {/* Observaciones */}
-          <div>
-            <label className="block text-xs text-neutral-400 mb-2">Observaciones (Opcional)</label>
-            <textarea name="observaciones" rows={2} value={entrenamiento.observaciones} onChange={handleHeaderChange} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2 text-sm focus:outline-none resize-none" />
-          </div>
+          {/* SECCIÓN DE ASISTENCIA DIARIA */}
+          {listaAlumnos.length > 0 && (
+            <div className="bg-neutral-950 p-6 rounded-xl border border-neutral-800">
+              <h3 className="text-sm font-semibold text-neutral-300 mb-3 uppercase tracking-wider">Planilla de Asistencia</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {listaAlumnos.map(al => (
+                  <div key={al.id} onClick={() => toggleAsistencia(al.id)} className={`p-2.5 border rounded-lg flex items-center justify-between text-xs cursor-pointer transition-all ${
+                    al.presente ? 'bg-emerald-950/20 border-emerald-800/60 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-500 line-through'
+                  }`}>
+                    <span>{al.nombre}</span>
+                    <span>{al.presente ? '✔ PRESENTE' : '✕ AUSENTE'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
-          {/* Botón de Envío */}
-          <div className="flex justify-end">
-            <button type="submit" disabled={cargando} className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm uppercase px-8 py-3 rounded-lg shadow-md">
-              {cargando ? 'Guardando...' : 'Guardar Planificación'}
-            </button>
-          </div>
+          {/* BOTÓN DE ACCIÓN */}
+          <button 
+            type="submit" 
+            disabled={cargando} 
+            className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-neutral-800 text-neutral-950 font-bold py-3 rounded-lg text-sm transition-colors shadow-lg"
+          >
+            {cargando ? 'Guardando en Vercel Postgres...' : 'GRABAR ENTRENAMIENTO Y ASISTENCIA'}
+          </button>
+
         </form>
       </div>
     </div>
   );
 }
+
