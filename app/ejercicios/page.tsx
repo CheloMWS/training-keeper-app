@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/supabaseClient'; // ← El arroba (@) buscará el archivo que acabamos de crear en la raíz
+import Link from 'next/link'; 
+import { supabase } from '@/supabaseClient';
 
+// Nombre corregido con Mayúscula inicial para cumplir las reglas estrictas de Next.js
 export default function CargarEjercicio() {
   const [formData, setFormData] = useState({
     codigo: '',
@@ -10,8 +12,8 @@ export default function CargarEjercicio() {
     desarrollo: '',
     objetivos: '',
     cantidad_jugadores: '',
-    rubro: '',      // Guardará el nombre del rubro seleccionado
-    subrubro: '',   // Guardará el nombre del subrubro seleccionado
+    rubro: '',      
+    subrubro: '',   
     club_asociado: '',
     multimedia_url: ''
   });
@@ -24,16 +26,15 @@ export default function CargarEjercicio() {
   const [cargando, setCargando] = useState(false);
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
 
-  // 1. CARGAR LOS RUBROS Y SUBRUBROS AL ABRIR LA PANTALLA
+  // 1. CARGAR LOS RUBROS Y SUBRUBROS (Modo de acceso libre sin validaciones de sesión)
   useEffect(() => {
     const descargarFiltros = async () => {
-      // Traemos todos los rubros
-      const { data: rubros, error: err1 } = await supabase.from('rubros').select('*').order('nombre', { ascending: true });
-      // Traemos todos los subrubros
-      const { data: subrubros, error: err2 } = await supabase.from('subrubros').select('*').order('nombre', { ascending: true });
+      // Consultas directas estables al estar el RLS desactivado en la plataforma web
+      const { data: rubros } = await supabase.from('rubros').select('*');
+      const { data: subrubros } = await supabase.from('subrubros').select('*');
 
-      if (!err1 && rubros) setRubrosDB(rubros);
-      if (!err2 && subrubros) setSubrubrosDB(subrubros);
+      if (rubros) setRubrosDB(rubros);
+      if (subrubros) setSubrubrosDB(subrubros);
     };
 
     descargarFiltros();
@@ -42,7 +43,6 @@ export default function CargarEjercicio() {
   // 2. EFECTO REACTIVO: Filtra los subrubros cuando cambia el rubro seleccionado
   useEffect(() => {
     if (formData.rubro) {
-      // Encontramos el ID del rubro actual por su nombre
       const rubroActual = rubrosDB.find(r => r.nombre === formData.rubro);
       if (rubroActual) {
         const filtrados = subrubrosDB.filter(s => s.rubro_id === rubroActual.id);
@@ -53,7 +53,6 @@ export default function CargarEjercicio() {
     } else {
       setSubrubrosFiltrados([]);
     }
-    // Limpiamos el subrubro si cambian el rubro padre para evitar inconsistencias
     setFormData(prev => ({ ...prev, subrubro: '' }));
   }, [formData.rubro, rubrosDB, subrubrosDB]);
 
@@ -85,7 +84,7 @@ export default function CargarEjercicio() {
 
       if (error) throw error;
 
-      setMensaje({ tipo: 'exito', texto: '¡Ejercicio de Arquero guardado exitosamente con su tipo oficial! 🚀' });
+      setMensaje({ tipo: 'exito', texto: '¡Ejercicio de Arquero guardado exitosamente! 🚀' });
       setFormData({
         codigo: '', nombre: '', desarrollo: '', objetivos: '',
         cantidad_jugadores: '', rubro: '', subrubro: '', club_asociado: '', multimedia_url: ''
@@ -98,7 +97,6 @@ export default function CargarEjercicio() {
       setCargando(false);
     }
   };
-
   return (
     <div className="min-h-screen bg-neutral-950 text-white p-6 md:p-12 font-sans">
       <div className="max-w-3xl mx-auto bg-neutral-900 border border-neutral-800 rounded-xl p-8 shadow-2xl">
@@ -109,9 +107,10 @@ export default function CargarEjercicio() {
             <h1 className="text-2xl font-bold tracking-tight text-emerald-400">TRAINING KEEPER APP</h1>
             <p className="text-neutral-400 text-sm mt-1">Catálogo de Ejercicios — Clasificación Inteligente</p>
           </div>
-          <a href="/" className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors">
+          {/* Navegación nativa segura que evita el F5 completo */}
+          <Link href="/" className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors">
             ← Volver al Menú
-          </a>
+          </Link>
         </div>
 
         {/* Alertas de estado */}
@@ -188,7 +187,7 @@ export default function CargarEjercicio() {
             <textarea name="desarrollo" required rows={4} placeholder="Secuencia del entrenamiento..." value={formData.desarrollo} onChange={handleChange} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 resize-none" />
           </div>
 
-                    {/* Botón Guardar */}
+          {/* Botón Guardar */}
           <div className="flex justify-end pt-4">
             <button 
               type="submit" 
@@ -204,3 +203,4 @@ export default function CargarEjercicio() {
     </div>
   );
 }
+
