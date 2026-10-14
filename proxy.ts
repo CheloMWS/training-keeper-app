@@ -1,8 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-// El truco está aquí: la función se exporta y se llama exactamente "proxy"
-export async function proxy(request: NextRequest) {
+export default async function proxy(request: NextRequest) {
   let response = NextResponse.next({
     request: {
       headers: request.headers,
@@ -20,14 +19,18 @@ export async function proxy(request: NextRequest) {
         set(name: string, value: string, options: CookieOptions) {
           request.cookies.set({ name, value, ...options })
           response = NextResponse.next({
-            request: { headers: request.headers }
+            request: {
+              headers: request.headers,
+            },
           })
           response.cookies.set({ name, value, ...options })
         },
         remove(name: string, options: CookieOptions) {
           request.cookies.set({ name, value: '', ...options })
           response = NextResponse.next({
-            request: { headers: request.headers }
+            request: {
+              headers: request.headers,
+            },
           })
           response.cookies.set({ name, value: '', ...options })
         },
@@ -36,19 +39,24 @@ export async function proxy(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
-  const url = request.nextUrl.clone()
-  
-  // Si no hay usuario y no va al login ni a la raíz, rebota al login
-  if (!user && !url.pathname.startsWith('/login') && url.pathname !== '/') {
-    url.pathname = '/login'
-    return NextResponse.redirect(url)
+  const { pathname } = request.nextUrl
+
+  // 🔒 PROTECCIÓN: Si no hay usuario y no está en /login, directo al login
+  if (!user && pathname !== '/login') {
+    return NextResponse.redirect(new URL('/login', request.url))
+  }
+
+  // Si ya hay usuario y va a /login, al panel de control
+  if (user && pathname === '/login') {
+    return NextResponse.redirect(new URL('/', request.url))
   }
 
   return response
 }
 
 export const config = {
-  matcher: [
-    '/((?!api|_next/static|_next/image|auth|favicon.ico|.*\\.png$).*)',
-  ],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 }
+
+
+

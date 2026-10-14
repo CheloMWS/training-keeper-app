@@ -1,125 +1,145 @@
-'use client';
+'use client'
 
-import { useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation'
+import { createBrowserClient } from '@supabase/ssr'
 
-export default function MenuPrincipal() {
-  const router = useRouter();
+export default function HomePage() {
+  const router = useRouter()
+  
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
-  const handleNavigation = (ruta: string) => {
-    // Forzamos al navegador a saltar a la página ignorando cualquier traba o caché interna de Next.js
-    window.location.href = ruta;
-  };
-
+  // Acción nativa de cierre de sesión
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    // Forzamos al navegador a redirigir limpiando la memoria de cookies de raíz
+    window.location.href = '/login'
+  }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-white p-6 md:p-12 font-sans flex flex-col justify-center items-center relative">
-      
-      <div className="max-w-6xl w-full bg-neutral-900 border border-neutral-800 rounded-2xl p-8 md:p-12 shadow-2xl text-center mt-12">
+    <div className="min-h-screen bg-neutral-950 text-white p-6 md:p-12 font-sans">
+      <div className="max-w-6xl mx-auto bg-neutral-900 border border-neutral-800 rounded-xl p-8 shadow-2xl space-y-8">
         
-        {/* Encabezado Principal */}
-        <div className="mb-12">
-          <span className="bg-emerald-950/80 text-emerald-400 border border-emerald-800/50 text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-widest">
-            Panel de Control Central — Modo Libre
-          </span>
-          <h1 className="text-4xl font-black tracking-tight text-white mt-4 sm:text-5xl">
-            TRAINING <span className="text-emerald-400">KEEPER</span> APP
-          </h1>
-          <p className="text-neutral-400 text-sm mt-3 max-w-md mx-auto">
-            Plataforma digital especializada para el entrenamiento de arqueros. Gestión táctica, fichaje y cronogramas.
-          </p>
+        {/* Cabecera Principal */}
+        <div className="border-b border-neutral-800 pb-6 flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-emerald-400">TRAINING KEEPER APP</h1>
+            <p className="text-neutral-400 text-sm mt-1">Plataforma digital especializada para el entrenamiento de arqueros.</p>
+          </div>
+          <button 
+            onClick={handleLogout}
+            className="text-xs text-neutral-400 hover:text-red-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors bg-neutral-950"
+          >
+            Cerrar Sesión
+          </button>
         </div>
 
-        {/* REJILLA DE 5 COLUMNAS LIBRES */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Grilla de 5 Módulos */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           
-          {/* Opción 1: Ejercicios */}
-          <button
-            onClick={() => handleNavigation('/ejercicios')}
-            className="flex flex-col items-center border border-neutral-800 bg-neutral-950 hover:border-emerald-500/50 transform hover:scale-[1.03] transition-all text-center w-full group p-5 rounded-xl"
-          >
-            <div className="size-11 rounded-lg border border-neutral-800 bg-neutral-900 text-emerald-400 flex items-center justify-center text-lg font-bold mb-3 transition-colors group-hover:bg-emerald-500 group-hover:text-black">
-              🏑
+          {/* 1. Catálogo */}
+          <div className="bg-neutral-950 p-6 rounded-xl border border-neutral-800 flex flex-col justify-between hover:border-neutral-700 transition-colors shadow-lg">
+            <div>
+              <div className="text-xl mb-2 text-emerald-400">🏑</div>
+              <h3 className="text-base font-bold text-neutral-100 mb-1">Catálogo Ejercicios</h3>
+              <p className="text-neutral-400 text-xs mb-6 leading-relaxed">Cargá ejercicios con clasificación por rubros tácticos y multimedia.</p>
             </div>
-            <h3 className="font-bold text-sm text-neutral-100 transition-colors group-hover:text-emerald-400">
-              Catálogo Ejercicios
-            </h3>
-            <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
-              Cargá ejercicios con clasificación por rubros y multimedia.
-            </p>
-          </button>
+            <button 
+              onClick={() => router.push('/ejercicios')}
+              className="w-full text-center py-2 bg-neutral-900 border border-neutral-800 hover:border-emerald-500/50 hover:text-emerald-400 rounded-lg text-xs font-semibold transition-all"
+            >
+              Abrir Catálogo
+            </button>
+          </div>
 
-          {/* Opción 2: Jugadores */}
-          <button
-            onClick={() => handleNavigation('/jugadores')}
-            className="flex flex-col items-center border border-neutral-800 bg-neutral-950 hover:border-emerald-500/50 transform hover:scale-[1.03] transition-all text-center w-full group p-5 rounded-xl"
-          >
-            <div className="size-11 rounded-lg border border-neutral-800 bg-neutral-900 text-emerald-400 flex items-center justify-center text-lg font-bold mb-3 transition-colors group-hover:bg-emerald-500 group-hover:text-black">
-              👥
+          {/* 2. Registro Jugadores */}
+          <div className="bg-neutral-950 p-6 rounded-xl border border-neutral-800 flex flex-col justify-between hover:border-neutral-700 transition-colors shadow-lg">
+            <div>
+              <div className="text-xl mb-2 text-emerald-400">👥</div>
+              <h3 className="text-base font-bold text-neutral-100 mb-1">Registro Jugadores</h3>
+              <p className="text-neutral-400 text-xs mb-6 leading-relaxed">Registrá y gestioná el plantel de arqueros vinculado a tus clubes oficiales.</p>
             </div>
-            <h3 className="font-bold text-sm text-neutral-100 transition-colors group-hover:text-emerald-400">
-              Registro Jugadores
-            </h3>
-            <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
-              Registrá arqueros vinculados a tus clubes oficiales.
-            </p>
-          </button>
+            <button 
+              onClick={() => router.push('/jugadores')}
+              className="w-full text-center py-2 bg-neutral-900 border border-neutral-800 hover:border-emerald-500/50 hover:text-emerald-400 rounded-lg text-xs font-semibold transition-all"
+            >
+              Ver Jugadores
+            </button>
+          </div>
 
-          {/* Opción 3: Planificaciones */}
-          <button
-            onClick={() => handleNavigation('/planificaciones')}
-            className="flex flex-col items-center border border-neutral-800 bg-neutral-950 hover:border-emerald-500/50 transform hover:scale-[1.03] transition-all text-center w-full group p-5 rounded-xl"
-          >
-            <div className="size-11 rounded-lg border border-neutral-800 bg-neutral-900 text-emerald-400 flex items-center justify-center text-lg font-bold mb-3 transition-colors group-hover:bg-emerald-500 group-hover:text-black">
-              📋
+          {/* 3. Planificar Entrenamiento */}
+          <div className="bg-neutral-950 p-6 rounded-xl border border-emerald-500/30 flex flex-col justify-between hover:border-emerald-500/60 transition-colors shadow-lg ring-1 ring-emerald-500/10">
+            <div>
+              <div className="text-xl mb-2 text-emerald-400">📋</div>
+              <h3 className="text-base font-bold text-emerald-400 mb-1">Planificar Entrenamiento</h3>
+              <p className="text-neutral-400 text-xs mb-6 leading-relaxed">Armá la rutina diaria con control de asistencia automatizado.</p>
             </div>
-            <h3 className="font-bold text-sm text-neutral-100 transition-colors group-hover:text-emerald-400">
-              Planificar Entrenamiento
-            </h3>
-            <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
-              Armá la rutina diaria con control de asistencia automatizado.
-            </p>
-          </button>
+            <button 
+              onClick={() => router.push('/planificaciones')}
+              className="w-full text-center py-2 bg-emerald-950/40 border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-lg text-xs font-semibold transition-all"
+            >
+              Planificar Hoy
+            </button>
+          </div>
 
-          {/* Opción 4: Historial de Sesiones */}
-          <button
-            onClick={() => handleNavigation('/historial')}
-            className="flex flex-col items-center border border-neutral-800 bg-neutral-950 hover:border-emerald-500/50 transform hover:scale-[1.03] transition-all text-center w-full group p-5 rounded-xl"
-          >
-            <div className="size-11 rounded-lg border border-neutral-800 bg-neutral-900 text-emerald-400 flex items-center justify-center text-lg font-bold mb-3 transition-colors group-hover:bg-emerald-500 group-hover:text-black">
-              📜
+          {/* 4. Historial Temporada */}
+          <div className="bg-neutral-950 p-6 rounded-xl border border-neutral-800 flex flex-col justify-between hover:border-neutral-700 transition-colors shadow-lg">
+            <div>
+              <div className="text-xl mb-2 text-emerald-400">📜</div>
+              <h3 className="text-base font-bold text-neutral-100 mb-1">Historial Temporada</h3>
+              <p className="text-neutral-400 text-xs mb-6 leading-relaxed">Auditá entrenamientos pasados, minutos acumulados y asistencias.</p>
             </div>
-            <h3 className="font-bold text-sm text-neutral-100 transition-colors group-hover:text-emerald-400">
-              Historial Temporada
-            </h3>
-            <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
-              Auditá entrenamientos pasados, minutos y ausencias.
-            </p>
-          </button>
+            <button 
+              onClick={() => router.push('/historial')}
+              className="w-full text-center py-2 bg-neutral-900 border border-neutral-800 hover:border-emerald-500/50 hover:text-emerald-400 rounded-lg text-xs font-semibold transition-all"
+            >
+              Ver Historial
+            </button>
+          </div>
+          {/* 5. Gestión de Datos */}
+          <div className="bg-neutral-950 p-6 rounded-xl border border-neutral-800 flex flex-col justify-between hover:border-neutral-700 transition-colors shadow-lg">
+            <div>
+              <div className="text-xl mb-2 text-emerald-400">⚙</div>
+              <h3 className="text-base font-bold text-neutral-100 mb-1">Gestión de Datos</h3>
+              <p className="text-neutral-400 text-xs mb-6 leading-relaxed">Configurá las listas oficiales de Clubes, Categorías y Divisiones.</p>
+            </div>
+            <button 
+              onClick={() => router.push('/configuracion')}
+              className="w-full text-center py-2 bg-neutral-900 border border-neutral-800 hover:border-emerald-500/50 hover:text-emerald-400 rounded-lg text-xs font-semibold transition-all"
+            >
+              Configurar Datos
+            </button>
+          </div>
 
-          {/* Opción 5: Gestión */}
-          <button
-            onClick={() => handleNavigation('/configuracion')}
-            className="flex flex-col items-center border border-neutral-800 bg-neutral-950 hover:border-emerald-500/50 transform hover:scale-[1.03] transition-all text-center w-full group p-5 rounded-xl"
-          >
-            <div className="size-11 rounded-lg border border-neutral-800 bg-neutral-900 text-emerald-400 flex items-center justify-center text-lg font-bold mb-3 transition-colors group-hover:bg-emerald-500 group-hover:text-black">
-              ⚙️
+          {/* 6. Reportes y Estadísticas */}
+          <div className="bg-neutral-950 p-6 rounded-xl border border-neutral-800 flex flex-col justify-between hover:border-neutral-700 transition-colors shadow-lg">
+            <div>
+              <div className="text-xl mb-2 text-emerald-400">📊</div>
+              <h3 className="text-base font-bold text-neutral-100 mb-1">Reportes y Estadísticas</h3>
+              <p className="text-neutral-400 text-xs mb-6 leading-relaxed">Generá reportes de asistencia, rendimiento técnico y minutos acumulados.</p>
             </div>
-            <h3 className="font-bold text-sm text-neutral-100 transition-colors group-hover:text-emerald-400">
-              Gestión de Datos
-            </h3>
-            <p className="text-neutral-500 text-[10px] mt-1.5 leading-relaxed">
-              Gestioná tus listas oficiales de Clubes, Categorías y Ejercicios.
-            </p>
-          </button>
+            <button 
+              onClick={() => router.push('/reportes')}
+              className="w-full text-center py-2 bg-neutral-900 border border-neutral-800 hover:border-emerald-500/50 hover:text-emerald-400 rounded-lg text-xs font-semibold transition-all"
+            >
+              Generar Reportes
+            </button>
+          </div>
 
         </div>
 
         {/* Pie de página */}
-        <div className="mt-12 text-xs text-neutral-600 border-t border-neutral-800/60 pt-6">
-          Training Keeper App v1.3 — Modo Abierto de Desarrollo
+        <div className="text-center pt-4 border-t border-neutral-800 text-[11px] text-neutral-600">
+          Training Keeper App v1.3 — Interfaz Unificada Neutral-Emerald
         </div>
 
       </div>
     </div>
-  );
+  )
 }
+
+
+
+

@@ -1,354 +1,506 @@
-'use client';
-import { useRouter } from 'next/navigation';
-import { useState, useEffect } from 'react';
-import { supabase } from '@/supabaseClient'; 
+'use client'
 
-export default function PlanificacionKeeper() {
-  const router = useRouter();
-  const [autenticado, setAutenticado] = useState(false);
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { createBrowserClient } from '@supabase/ssr'
 
-  // EFECTO DE SEGURIDAD: Verificar sesión activa antes de cargar el resto de la pantalla
-  useEffect(() => {
-    const chequearSesion = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        router.push('/login');
-      } else {
-        setAutenticado(true);
+export default function PlanificacionesPage() {
+  const router = useRouter()
+
+  // --- ESTADOS DE DATOS DESDE SUPABASE ---
+  const [clubesDisponibles, setClubesDisponibles] = useState<string[]>([])
+  const [equiposDisponibles, setEquiposDisponibles] = useState<string[]>([])
+  const [ejerciciosCatalogo, setEjerciciosCatalogo] = useState<any[]>([])
+  const [arquerosFiltrados, setArquerosFiltrados] = useState<any[]>([])
+
+  // --- ESTADOS DEL FORMULARIO ACTUAL ---
+  const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
+  const [clubSeleccionado, setClubSeleccionado] = useState('')
+  const [equipoSeleccionado, setEquipoSeleccionado] = useState('')
+  const [ejerciciosSeleccionados, setEjerciciosSeleccionados] = useState<any[]>([])
+  const [asistencia, setAsistencia] = useState<{ [key: string]: boolean }>({})
+
+  // --- ESTADOS NUEVOS PARA MODAL Y FILTRO POR RUBRO TÁCTICO ---
+  const [ejercicioPrevisualizado, setEjercicioPrevisualizado] = useState<any | null>(null)
+  const [rubroFiltrado, setRubroFiltrado] = useState('')
+
+  // --- ESTADOS DE CARGA Y PROCESO ---
+  const [cargandoBase, setCargandoBase] = useState(true)
+  const [guardando, setGuardando] = useState(false)
+  const [mensajeExito, setMensajeExito] = useState('')
+
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
       }
-    };
-    chequearSesion();
-  }, [router]);
-
-  // Datos principales de la sesión
-  const [entrenamiento, setEntrenamiento] = useState({
-    numero: '',
-    club: '',
-    categoria: '',
-    division: '',
-    objetivo: '',
-    observaciones: ''
-  });
-
-  // Listas de datos maestros que vienen de Supabase
-  const [clubesDB, setClubesDB] = useState<any[]>([]);
-  const [categoriasDB, setCategoriasDB] = useState<any[]>([]);
-  const [ejerciciosCatalogo, setEjerciciosCatalogo] = useState<any[]>([]);
-  
-  // Lista de alumnos que asisten y ejercicios elegidos en la rutina
-  const [listaAlumnos, setListaAlumnos] = useState<any[]>([]);
-  const [ejerciciosSeleccionados, setEjerciciosSeleccionados] = useState<any[]>([]);
-
-  const [cargando, setCargando] = useState(false);
-  const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
-
-  // EFECTO 1: Descargar catálogos iniciales al abrir la pantalla
-  useEffect(() => {
-    const descargarCatalogosBase = async () => {
-      const { data: ejs } = await supabase.from('ejercicios').select('id, codigo, nombre, desarrollo, multimedia_url').order('codigo', { ascending: true });
-      const { data: clubs } = await supabase.from('clubes').select('*').order('nombre', { ascending: true });
-      const { data: cats } = await supabase.from('categorias').select('*').order('nombre', { ascending: true });
-
-      if (ejs) setEjerciciosCatalogo(ejs);
-      if (clubs) setClubesDB(clubs);
-      if (cats) setCategoriasDB(cats);
-    };
-    descargarCatalogosBase();
-  }, []);
-
-  // EFECTO 2: Enlazar alumnos automáticamente al cambiar los selectores superiores
-  useEffect(() => {
-    const buscarPlantelReal = async () => {
-      if (entrenamiento.club && entrenamiento.categoria && entrenamiento.division) {
-        const { data, error } = await supabase
-          .from('alumnos')
-          .select('id, nombre_completo')
-          .eq('club', entrenamiento.club)
-          .eq('categoria', entrenamiento.categoria)
-          .eq('division', entrenamiento.division.trim().toUpperCase())
-          .eq('estado', 'Activo');
-
-        if (!error && data && data.length > 0) {
-          setListaAlumnos(data.map(j => ({ id: j.id, nombre: j.nombre_completo, presente: true })));
-        } else {
-          setListaAlumnos([
-            { id: 'mock-1', nombre: 'Arquero de Prueba 1 (Simulado)', presente: true },
-            { id: 'mock-2', nombre: 'Arquero de Prueba 2 (Simulado)', presente: true }
-          ]);
-        }
-      } else {
-        setListaAlumnos([]);
-      }
-    };
-    buscarPlantelReal();
-  }, [entrenamiento.club, entrenamiento.categoria, entrenamiento.division]);
-
-  // Manejador genérico para inputs, textareas y selectores
-  const handleHeaderChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    setEntrenamiento({ ...entrenamiento, [e.target.name]: e.target.value });
-  };
-  
-  // Funciones para manipular la rutina interactiva
-  const agregarEjercicio = (id: string) => {
-    const ej = ejerciciosCatalogo.find(e => e.id === id);
-    if (ej && !ejerciciosSeleccionados.some(e => e.id === id)) {
-      setEjerciciosSeleccionados([...ejerciciosSeleccionados, { ...ej, duracion: 15 }]);
     }
-  };
+  )
+  // 1. CARGAR CATÁLOGO DE EJERCICIOS Y LISTA OFICIAL DE CLUBES
+  useEffect(() => {
+    async function inicializarModulo() {
+      setCargandoBase(true)
+      await supabase.auth.getSession()
+      
+      const { data: dataEjercicios } = await supabase
+        .from('ejercicios')
+        .select('id, codigo, nombre, rubro, multimedia_url, desarrollo')
+        .order('nombre', { ascending: true })
 
-  const removerEjercicio = (id: string) => {
-    setEjerciciosSeleccionados(ejerciciosSeleccionados.filter(e => e.id !== id));
-  };
+      if (dataEjercicios) setEjerciciosCatalogo(dataEjercicios)
 
-  const handleDuracionChange = (id: string, minutos: number) => {
-    setEjerciciosSeleccionados(ejerciciosSeleccionados.map(e => e.id === id ? { ...e, duracion: minutos } : e));
-  };
+      const { data: dataClubes } = await supabase
+        .from('clubes')
+        .select('nombre')
+        .order('nombre', { ascending: true })
 
-  const toggleAsistencia = (id: string) => {
-    setListaAlumnos(listaAlumnos.map(a => a.id === id ? { ...a, presente: !a.presente } : a));
-  };
+      if (dataClubes) {
+        const listaClubes = dataClubes.map(c => c.nombre).filter(Boolean) as string[]
+        setClubesDisponibles(listaClubes)
+      }
+      setCargandoBase(false)
+    }
+    inicializarModulo()
+  }, [supabase])
 
-  // Si todavía está verificando el estado Auth de Supabase, frena la carga del HTML
-  if (!autenticado) {
-    return (
-      <div className="min-h-screen bg-neutral-950 flex items-center justify-center text-xs text-neutral-500">
-        Verificando credenciales de acceso...
-      </div>
-    );
+  // 2. BUSCAR EQUIPOS DIRECTAMENTE DESDE LA TABLA 'CATEGORIAS'
+  useEffect(() => {
+    if (!clubSeleccionado) {
+      setEquiposDisponibles([])
+      setEquipoSeleccionado('')
+      return
+    }
+
+    async function cargarCategoriasPermanentes() {
+      const { data, error } = await supabase
+        .from('categorias')
+        .select('nombre')
+        .order('nombre', { ascending: true })
+
+      if (error) console.error("Error Supabase Categorias:", error.message)
+      
+      if (data) {
+        const listaCategorias = data.map(cat => cat.nombre).filter(Boolean) as string[]
+        setEquiposDisponibles(listaCategorias)
+      }
+    }
+    cargarCategoriasPermanentes()
+  }, [clubSeleccionado, supabase])
+  // 3. CARGAR JUGADORES FILTRADOS POR CLUB Y CATEGORÍA REAL
+  useEffect(() => {
+    if (!clubSeleccionado || !equipoSeleccionado) {
+      setArquerosFiltrados([])
+      return
+    }
+
+    async function cargarJugadoresFiltrados() {
+      const { data, error } = await supabase
+        .from('alumnos')
+        .select('id, nombre_completo, categoria, division')
+        .eq('club', clubSeleccionado)
+        .eq('categoria', equipoSeleccionado)
+        .order('nombre_completo', { ascending: true })
+
+      if (error) console.error("Error al traer alumnos filtrados:", error.message)
+
+      if (data) {
+        setArquerosFiltrados(data)
+        const asistenciaInicial: { [key: string]: boolean } = {}
+        data.forEach(arq => {
+          asistenciaInicial[arq.id] = true
+        })
+        setAsistencia(asistenciaInicial)
+      }
+    }
+    cargarJugadoresFiltrados()
+  }, [clubSeleccionado, equipoSeleccionado, supabase])
+
+  // --- MANIPULACIÓN DE EJERCICIOS EN EL VISOR DE RUTINA ---
+  const cambiarDuracionEjercicio = (id: string, minutos: number) => {
+    setEjerciciosSeleccionados(
+      ejerciciosSeleccionados.map(e => e.id === id ? { ...e, duracion: minutos } : e)
+    )
   }
 
-  // ENVÍO MASIVO MULTITABLA A SUPABASE
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (ejerciciosSeleccionados.length === 0) {
-      setMensaje({ tipo: 'error', texto: 'Debes seleccionar al menos un ejercicio.' });
-      return;
-    }
-    setCargando(true); setMensaje({ tipo: '', texto: '' });
+  const quitarEjercicioDeRutina = (id: string) => {
+    setEjerciciosSeleccionados(ejerciciosSeleccionados.filter(e => e.id !== id))
+  }
+
+  const toggleAsistencia = (id: string) => {
+    setAsistencia(prev => ({ ...prev, [id]: !prev[id] }))
+  }
+  // 4. GUARDAR EL ENTRENAMIENTO COMPLETO EN LAS TABLAS ASOCIADAS
+  const handleGuardarTodo = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!clubSeleccionado || !equipoSeleccionado || ejerciciosSeleccionados.length === 0) return
+    setGuardando(true)
+    setMensajeExito('')
 
     try {
-      // A. Guardar cabecera del entrenamiento
-      const { data: nuevoEntreno, error: errorEntreno } = await supabase
+      const { data: nuevoEntrenamiento, error: errEntrenamiento } = await supabase
         .from('entrenamientos')
-        .insert([{
-          numero_entrenamiento: parseInt(entrenamiento.numero),
-          club: entrenamiento.club,
-          categoria: entrenamiento.categoria,
-          division: entrenamiento.division.trim().toUpperCase(),
-          objetivo_sesion: entrenamiento.objetivo.trim(),
-          observaciones: entrenamiento.observaciones.trim()
-        }]).select().single();
+        .insert([{ fecha, club: clubSeleccionado }])
+        .select()
+        .single()
 
-      if (errorEntreno) throw errorEntreno;
+      if (errEntrenamiento) throw errEntrenamiento
 
-      // B. Guardar cronograma en la tabla intermedia
-      const filasEjercicios = ejerciciosSeleccionados.map((ej, idx) => ({
-        entrenamiento_id: nuevoEntreno.id,
+      const entrenamientoId = nuevoEntrenamiento.id
+
+      const filasEjercicios = ejerciciosSeleccionados.map(ej => ({
+        entrenamiento_id: entrenamientoId,
         ejercicio_id: ej.id,
-        orden: idx + 1,
-        duracion_minutos: parseInt(ej.duracion) || 0
-      }));
-      const { error: errorEjercicios } = await supabase.from('entrenamiento_ejercicios').insert(filasEjercicios);
-      if (errorEjercicios) throw errorEjercicios;
+        duracion_minutos: ej.duracion
+      }))
 
-      // C. Guardar la planilla de asistencia diario
-      if (listaAlumnos.length > 0) {
-        const filasAsistencia = listaAlumnos.map(al => ({
-          entrenamiento_id: nuevoEntreno.id,
-          alumno_id: al.id,
-          presente: al.presente
-        }));
-        const { error: errorAsistencia } = await supabase.from('asistencias').insert(filasAsistencia);
-        if (errorAsistencia) throw errorAsistencia;
+      const { error: errRelacionEjercicios } = await supabase
+        .from('entrenamiento_ejercicios')
+        .insert(filasEjercicios)
+
+      if (errRelacionEjercicios) throw errRelacionEjercicios
+
+      if (arquerosFiltrados.length > 0) {
+        const filasAsistencia = arquerosFiltrados.map(arq => ({
+          entrenamiento_id: entrenamientoId,
+          alumno_id: arq.id,
+          presente: asistencia[arq.id] ?? false
+        }))
+
+        const { error: errAsistencia } = await supabase
+          .from('asistencias')
+          .insert(filasAsistencia)
+
+        if (errAsistencia) throw errAsistencia
       }
 
-      setMensaje({ tipo: 'exito', texto: '¡Entrenamiento y asistencia grabados exitosamente en la nube! 🚀' });
-      setEntrenamiento({ numero: '', club: '', categoria: '', division: '', objetivo: '', observaciones: '' });
-      setEjerciciosSeleccionados([]); setListaAlumnos([]);
-
-    } catch (error: any) {
-      console.error(error);
-      setMensaje({ tipo: 'error', texto: `Error: ${error.message || 'Verifique duplicados.'}` });
-    } finally { setCargando(false); }
-  };
-
+      setMensajeExito('¡Planificación, categoría y asistencia guardados con éxito en Supabase! 🚀')
+      setEjerciciosSeleccionados([])
+      setClubSeleccionado('')
+      setEquipoSeleccionado('')
+    } catch (err) {
+      console.error('Error crítico al procesar la planificación completa:', err)
+    } finally {
+      setGuardando(false)
+    }
+  }
   return (
-    <div className="min-h-screen bg-neutral-950 text-white p-6 font-sans">
-      <div className="max-w-4xl mx-auto bg-neutral-900 border border-neutral-800 rounded-xl p-8 shadow-2xl">
+    <div className="min-h-screen bg-neutral-950 text-white p-6 md:p-12 font-sans">
+      <div className="max-w-7xl mx-auto bg-neutral-900 border border-neutral-800 rounded-xl p-8 shadow-2xl space-y-6">
         
         {/* Encabezado */}
-        <div className="border-b border-neutral-800 pb-6 mb-6 flex justify-between items-center">
+        <div className="border-b border-neutral-800 pb-6 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold text-emerald-400">TRAINING KEEPER APP</h1>
-            <p className="text-neutral-400 text-sm mt-1">Planificación y Asistencia de Plantel</p>
+            <h1 className="text-2xl font-bold tracking-tight text-emerald-400">TRAINING KEEPER APP</h1>
+            <p className="text-neutral-400 text-sm mt-1">Planificación Avanzada — Filtro por Equipo y Asistencia Automatizada</p>
           </div>
-          <a href="/" className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors">
+          <button 
+            type="button"
+            onClick={() => router.push('/')} 
+            className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors bg-neutral-950"
+          >
             ← Volver al Menú
-          </a>
+          </button>
         </div>
 
-        {/* Mensaje de Alerta */}
-        {mensaje.texto && (
-          <div className={`p-4 mb-6 rounded-lg text-sm font-semibold border ${
-            mensaje.tipo === 'exito' ? 'bg-emerald-950/40 text-emerald-400 border-emerald-800/60' : 'bg-red-950/40 text-red-400 border-red-800/60'
-          }`}>{mensaje.texto}</div>
+        {mensajeExito && (
+          <div className="bg-emerald-950/40 border border-emerald-500/50 p-4 rounded-xl text-emerald-400 text-xs text-center font-semibold">
+            {mensajeExito}
+          </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          
-          {/* BLOQUE DE FILTROS */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 bg-neutral-950 p-6 rounded-xl border border-neutral-800">
-            <div>
-              <label className="block text-xs text-neutral-400 mb-2">Entrenamiento Nº</label>
-              <input type="number" name="numero" required value={entrenamiento.numero} onChange={handleHeaderChange} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm focus:outline-none" />
-            </div>
+        {cargandoBase ? (
+          <div className="text-center py-12 text-neutral-500 text-xs">Sincronizando catálogos estratégicos de Supabase...</div>
+        ) : (
+          <form onSubmit={handleGuardarTodo} className="space-y-6">
             
-            <div>
-              <label className="block text-xs text-neutral-400 mb-2">Club</label>
-              <select name="club" required value={entrenamiento.club} onChange={handleHeaderChange} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm text-neutral-300 focus:outline-none focus:border-emerald-500">
-                <option value="">Seleccionar Club...</option>
-                {clubesDB.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs text-neutral-400 mb-2">Categoría</label>
-              <select name="categoria" required value={entrenamiento.categoria} onChange={handleHeaderChange} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm text-neutral-300 focus:outline-none focus:border-emerald-500">
-                <option value="">Seleccionar...</option>
-                {categoriasDB.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs text-neutral-400 mb-2">División</label>
-              <input type="text" name="division" required placeholder="Ej: A, B, UNICA" value={entrenamiento.division} onChange={handleHeaderChange} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-4 py-2 text-sm focus:outline-none" />
-            </div>
-          </div>
-
-          {/* OBJETIVOS Y OBSERVACIONES */}
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs text-neutral-400 mb-1">Objetivos de la Sesión</label>
-              <textarea name="objetivo" required value={entrenamiento.objetivo} onChange={handleHeaderChange} rows={2} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-sm focus:outline-none focus:border-emerald-500" placeholder="Escribí los objetivos principales..." />
-            </div>
-            <div>
-              <label className="block text-xs text-neutral-400 mb-1">Observaciones Generales</label>
-              <textarea name="observaciones" value={entrenamiento.observaciones} onChange={handleHeaderChange} rows={2} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg p-3 text-sm focus:outline-none focus:border-emerald-500" placeholder="Notas sobre el clima, la cancha o novedades..." />
-            </div>
-          </div>
-          {/* CUERPO DEL ARMADO: CATÁLOGO IZQUIERDA Y RUTINA DERECHA */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
-            {/* PANEL IZQUIERDO: CATÁLOGO DE EJERCICIOS */}
-            <div className="bg-neutral-950 border border-neutral-800 p-4 rounded-xl flex flex-col">
-              <h3 className="text-sm font-semibold text-neutral-300 mb-3 uppercase tracking-wider">
-                Catálogo de Ejercicios ({ejerciciosCatalogo.length})
-              </h3>
-              
-              <div className="max-h-[450px] overflow-y-auto pr-1 space-y-2">
-                {ejerciciosCatalogo.map((ej) => (
-                  <div 
-                    key={ej.id} 
-                    onClick={() => agregarEjercicio(ej.id)}
-                    className="p-2.5 bg-neutral-900 border border-neutral-800 rounded-lg hover:border-emerald-500 cursor-pointer transition-colors text-xs flex justify-between items-center group"
-                  >
-                    <span className="text-neutral-300 group-hover:text-emerald-400 transition-colors">
-                      <strong className="text-neutral-500 font-medium mr-1">[{ej.codigo}]</strong> {ej.nombre}
-                    </span>
-                    <span className="text-emerald-400 font-bold text-base px-1">+</span>
-                  </div>
-                ))}
+            {/* BARRA DE FILTROS SUPERIOR EN UNA SOLA LÍNEA HORIZONTAL */}
+            <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+              <div>
+                <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Fecha</label>
+                <input 
+                  type="date" required value={fecha} onChange={(e) => setFecha(e.target.value)}
+                  className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-neutral-100 focus:border-emerald-500/50 focus:outline-none"
+                />
               </div>
+
+              <div>
+                <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Club</label>
+                <select 
+                  required value={clubSeleccionado} onChange={(e) => {
+                    setClubSeleccionado(e.target.value)
+                    setEquipoSeleccionado('')
+                  }}
+                  className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-neutral-100 focus:border-emerald-500/50 focus:outline-none"
+                >
+                  <option value="">-- Elegir Club --</option>
+                  {clubesDisponibles.map((club, idx) => (
+                    <option key={idx} value={club}>{club}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Categoría</label>
+                <select 
+                  required 
+                  disabled={!clubSeleccionado}
+                  value={equipoSeleccionado} 
+                  onChange={(e) => setEquipoSeleccionado(e.target.value)}
+                  className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-neutral-100 focus:border-emerald-500/50 focus:outline-none disabled:opacity-40"
+                >
+                  <option value="">{clubSeleccionado ? '-- Elegir Categoría --' : '-- Primero elige un Club --'}</option>
+                  {equiposDisponibles.map((equipo, idx) => (
+                    <option key={idx} value={equipo}>{equipo}</option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                disabled={guardando || !clubSeleccionado || !equipoSeleccionado || ejerciciosSeleccionados.length === 0}
+                className="w-full text-center py-2 bg-emerald-950/40 border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-lg text-xs font-bold transition-all disabled:opacity-30 tracking-wider uppercase"
+              >
+                {guardando ? 'Guardando...' : 'Registrar Sesión'}
+              </button>
             </div>
 
-            {/* PANEL DERECHO: RUTINA SELECCIONADA */}
-            <div className="bg-neutral-950 border border-neutral-800 p-4 rounded-xl flex flex-col">
-              <h3 className="text-sm font-semibold text-neutral-300 mb-3 uppercase tracking-wider">
-                Rutina del Entrenamiento ({ejerciciosSeleccionados.length})
-              </h3>
-
-              <div className="space-y-2 max-h-[450px] overflow-y-auto pr-1">
-                {ejerciciosSeleccionados.length === 0 ? (
-                  <div className="text-neutral-500 text-xs py-8 text-center">Seleccioná ejercicios de la lista izquierda.</div>
+            {/* DOBLE PANEL INTERACTIVO INFERIOR */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* ASISTENCIA */}
+              <div className="lg:col-span-1 bg-neutral-950 p-4 rounded-xl border border-neutral-800 h-[500px] flex flex-col">
+                <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-3">Plantel de Asistencia</div>
+                
+                {!clubSeleccionado || !equipoSeleccionado ? (
+                  <div className="text-neutral-600 text-xs text-center my-auto px-4 leading-relaxed">
+                    Selecciona Club y Categoría en la barra superior para desplegar el plantel.
+                  </div>
+                ) : arquerosFiltrados.length === 0 ? (
+                  <div className="text-neutral-500 text-xs text-center my-auto">
+                    No hay jugadores cargados en esta división.
+                  </div>
                 ) : (
-                  ejerciciosSeleccionados.map((ej, index) => (
-                    <div key={ej.id} className="bg-neutral-900 border border-neutral-800 p-3 rounded-lg mb-2 text-xs flex flex-col gap-2">
-                      <div className="flex items-center justify-between w-full">
-                        <span className="font-medium text-neutral-200">
-                          <strong className="text-emerald-400 mr-1">{index + 1}.</strong> {ej.nombre}
+                  <div className="space-y-1.5 overflow-y-auto flex-1 pr-1">
+                    {arquerosFiltrados.map((arq) => (
+                      <div 
+                        key={arq.id} 
+                        onClick={() => toggleAsistencia(arq.id)}
+                        className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs cursor-pointer transition-all ${
+                          asistencia[arq.id] 
+                            ? 'bg-emerald-950/20 border-emerald-800/30 text-neutral-200' 
+                            : 'bg-red-950/10 border-red-900/20 text-neutral-500 line-through'
+                        }`}
+                      >
+                        <div>
+                          <p className="font-bold text-neutral-200 text-[13px]">{arq.nombre_completo}</p>
+                          <p className="text-[10px] text-neutral-500">{arq.categoria} {arq.division}</p>
+                        </div>
+                        <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${asistencia[arq.id] ? 'bg-emerald-900/40 text-emerald-400' : 'bg-red-900/20 text-red-400'}`}>
+                          {asistencia[arq.id] ? 'PRESENTE' : 'AUSENTE'}
                         </span>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <input 
-                            type="number" 
-                            value={ej.duracion} 
-                            min="1" 
-                            onChange={(e) => handleDuracionChange(ej.id, parseInt(e.target.value) || 0)} 
-                            className="w-10 bg-neutral-950 border border-neutral-800 rounded text-center text-emerald-400 py-0.5 text-xs focus:outline-none" 
-                          />
-                          <span className="text-neutral-500 text-[10px] mr-1">min</span>
-                          <button type="button" onClick={() => removerEjercicio(ej.id)} className="text-neutral-500 hover:text-red-400 p-1">✕</button>
-                        </div>
                       </div>
-
-                      {(ej.desarrollo || ej.multimedia_url) && (
-                        <div className="bg-neutral-950/70 border border-neutral-800/40 p-2.5 rounded text-neutral-400 leading-relaxed whitespace-pre-line text-[11px] flex flex-col gap-2">
-                          {ej.desarrollo && (
-                            <div>
-                              <span className="text-neutral-600 block text-[9px] font-bold uppercase tracking-wider mb-0.5">Desarrollo:</span>
-                              {ej.desarrollo}
-                            </div>
-                          )}
-
-                          {ej.multimedia_url && (
-                            <div className="pt-1.5 border-t border-neutral-800/60 flex justify-end">
-                              <a 
-                                href={ej.multimedia_url} 
-                                target="_blank" 
-                                rel="noopener noreferrer" 
-                                className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded text-[10px] font-semibold transition-colors flex items-center gap-1 uppercase tracking-wider"
-                              >
-                                📺 Ver Ejercicio
-                              </a>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* PANEL DE EJERCICIOS Y FILTRO POR RUBRO TÁCTICO */}
+              <div className="lg:col-span-2 bg-neutral-950 p-5 rounded-xl border border-neutral-800 h-[500px] flex flex-col justify-between">
+                <div className="space-y-4 flex-1 flex flex-col overflow-hidden">
+                  
+                  {/* Selector de Dos Niveles Encadenado */}
+                  <div className="border-b border-neutral-800 pb-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-1">
+                      <select
+                        value={rubroFiltrado}
+                        onChange={(e) => setRubroFiltrado(e.target.value)}
+                        className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-emerald-400 font-medium focus:border-emerald-500/50 focus:outline-none"
+                      >
+                        <option value="">-- Todos los Rubros --</option>
+                        {Array.from(new Set(ejerciciosCatalogo.map(e => e.rubro).filter(Boolean))).map((rubro, idx) => (
+                          <option key={idx} value={rubro}>{rubro}</option>
+                        ))}
+                      </select>
                     </div>
-                  ))
+
+                    <div className="sm:col-span-2">
+                      <select
+                        onChange={(e) => {
+                          const ejercicioId = e.target.value
+                          if (ejercicioId) {
+                            const encontrado = ejerciciosCatalogo.find(ex => ex.id === ejercicioId)
+                            if (encontrado) {
+                              setEjercicioPrevisualizado(encontrado)
+                            }
+                          }
+                          e.target.value = ""
+                        }}
+                        className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-neutral-200 focus:border-emerald-500/50 focus:outline-none"
+                      >
+                        <option value="">-- Seleccionar Ejercicio Táctico --</option>
+                        {ejerciciosCatalogo
+                          .filter(ej => !rubroFiltrado || ej.rubro === rubroFiltrado)
+                          .map((ej) => (
+                            <option key={ej.id} value={ej.id}>
+                              [{ej.codigo}] {ej.nombre}
+                            </option>
+                          ))
+                        }
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Estructura de la Sesión */}
+                  <div className="flex-1 overflow-y-auto pr-1 space-y-3">
+                    <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">📋 Estructura de la Sesión</div>
+                    
+                    {ejerciciosSeleccionados.length === 0 ? (
+                      <div className="text-neutral-600 text-xs py-12 text-center bg-neutral-900 rounded-lg border border-neutral-800/40">
+                        Tu rutina está vacía. Añade ejercicios arriba para ver su desarrollo y videos.
+                      </div>
+                    ) : (
+                      ejerciciosSeleccionados.map((ej) => (
+                        <div key={ej.id} className="bg-neutral-900 border border-neutral-800 p-3.5 rounded-xl flex flex-col gap-2 text-xs">
+                          <div className="space-y-1">
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-neutral-800 pb-2 mb-1">
+                              <div className="flex items-center gap-2">
+                                <span className="bg-neutral-800 text-neutral-400 font-mono font-bold px-1.5 py-0.5 rounded text-[10px]">[{ej.codigo}]</span>
+                                <span className="font-bold text-neutral-200 text-sm">{ej.nombre}</span>
+                              </div>
+                              
+                              <div className="flex items-center gap-3 text-[11px]">
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number" min={1} max={120} value={ej.duracion}
+                                    onChange={(e) => cambiarDuracionEjercicio(ej.id, parseInt(e.target.value) || 0)}
+                                    className="w-14 text-center rounded border border-neutral-800 bg-neutral-950 py-0.5 text-xs text-emerald-400 font-bold focus:outline-none"
+                                  />
+                                  <span className="text-neutral-400 text-[10px]">min</span>
+                                </div>
+                                <button
+                                  type="button" onClick={() => quitarEjercicioDeRutina(ej.id)}
+                                  className="text-neutral-500 hover:text-red-400 transition-colors font-medium text-[11px]"
+                                >
+                                  Quitar
+                                </button>
+                              </div>
+                            </div>
+                            
+                            <p className="text-[11px] text-neutral-400">Área Táctica: <span className="text-neutral-300">{ej.rubro}</span></p>
+                            
+                            {ej.desarrollo && (
+                              <div className="text-[11px] text-neutral-300 bg-neutral-950/50 p-2.5 rounded-lg border border-neutral-800/60 my-1.5 leading-relaxed whitespace-pre-wrap">
+                                <span className="text-[10px] font-bold text-emerald-500/80 block uppercase tracking-wider mb-0.5">Desarrollo:</span>
+                                {ej.desarrollo}
+                              </div>
+                            )}
+                            
+                            {ej.multimedia_url ? (
+                              <a 
+                                href={ej.multimedia_url} target="_blank" rel="noreferrer"
+                                className="text-[11px] text-emerald-400 hover:underline inline-flex items-center gap-1 pt-0.5"
+                              >
+                                🔗 Ver Video Demostrativo
+                              </a>
+                            ) : (
+                              <span className="text-[11px] text-neutral-600 block">Sin video</span>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
+
+          </form>
+        )}
+
+      </div>
+      {/* VENTANA EMERGENTE: MODAL DE PREVISUALIZACIÓN TÉCNICA */}
+      {ejercicioPrevisualizado && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-xl bg-neutral-900 border border-neutral-800 rounded-xl p-6 shadow-2xl space-y-4">
+            
+            <div className="border-b border-neutral-800 pb-3 flex justify-between items-start">
+              <div>
+                <span className="bg-neutral-800 text-neutral-400 font-mono font-bold px-1.5 py-0.5 rounded text-[10px]">[{ejercicioPrevisualizado.codigo}]</span>
+                <h2 className="text-lg font-bold text-emerald-400 mt-1">{ejercicioPrevisualizado.nombre}</h2>
+                <div className="flex flex-wrap items-center gap-3 text-neutral-400 text-xs mt-1">
+                  <span>Clasificación: <span className="text-neutral-200">{ejercicioPrevisualizado.rubro}</span></span>
+                  <span className="text-neutral-600">•</span>
+                  <span className="bg-emerald-950/40 text-emerald-400 border border-emerald-800/30 px-2 py-0.5 rounded font-medium text-[11px]">
+                    👥 {arquerosFiltrados.length} {arquerosFiltrados.length === 1 ? 'Arquero asignado' : 'Arqueros asignados'}
+                  </span>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setEjercicioPrevisualizado(null)}
+                className="text-neutral-500 hover:text-neutral-200 font-bold text-sm px-2"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs overflow-y-auto max-h-[300px] pr-1">
+              <div>
+                <span className="text-[10px] font-bold text-emerald-500 block uppercase tracking-wider mb-1">Desarrollo Técnico / Explicación:</span>
+                <p className="text-neutral-300 leading-relaxed bg-neutral-950 p-3 rounded-lg border border-neutral-800 whitespace-pre-wrap">
+                  {ejercicioPrevisualizado.desarrollo || "No registra descripción técnica en la base de datos."}
+                </p>
+              </div>
+
+              <div>
+                <span className="text-[10px] font-bold text-emerald-500 block uppercase tracking-wider mb-1">Enlace Multimedia Oficial:</span>
+                {ejercicioPrevisualizado.multimedia_url ? (
+                  <a 
+                    href={ejercicioPrevisualizado.multimedia_url} target="_blank" rel="noreferrer"
+                    className="text-emerald-400 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-emerald-500/40 px-3 py-2.5 rounded-lg w-full transition-all flex items-center justify-between font-medium group"
+                  >
+                    <span className="flex items-center gap-2">🎬 Ver Video Demostrativo del Ejercicio</span>
+                    <span className="text-neutral-500 group-hover:text-emerald-400 transition-colors text-[10px]">Abrir en pestaña nueva →</span>
+                  </a>
+                ) : (
+                  <div className="text-neutral-600 bg-neutral-950/40 border border-neutral-900/60 p-3 rounded-lg italic">
+                    Este ejercicio no registra un enlace de video cargado en el catálogo.
+                  </div>
                 )}
               </div>
             </div>
-          </div>
 
-          {/* SECCIÓN DE ASISTENCIA DIARIA */}
-          {listaAlumnos.length > 0 && (
-            <div className="bg-neutral-950 p-6 rounded-xl border border-neutral-800">
-              <h3 className="text-sm font-semibold text-neutral-300 mb-3 uppercase tracking-wider">Planilla de Asistencia</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {listaAlumnos.map(al => (
-                  <div key={al.id} onClick={() => toggleAsistencia(al.id)} className={`p-2.5 border rounded-lg flex items-center justify-between text-xs cursor-pointer transition-all ${
-                    al.presente ? 'bg-emerald-950/20 border-emerald-800/60 text-emerald-400' : 'bg-neutral-900 border-neutral-800 text-neutral-500 line-through'
-                  }`}>
-                    <span>{al.nombre}</span>
-                    <span>{al.presente ? '✔ PRESENTE' : '✕ AUSENTE'}</span>
-                  </div>
-                ))}
-              </div>
+            <div className="border-t border-neutral-800 pt-3 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setEjercicioPrevisualizado(null)}
+                className="w-1/3 text-center py-2 bg-neutral-950 border border-neutral-800 hover:border-neutral-700 text-neutral-400 rounded-lg text-xs font-semibold transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const yaExiste = ejerciciosSeleccionados.some(e => e.id === ejercicioPrevisualizado.id)
+                  if (!yaExiste) {
+                    setEjerciciosSeleccionados([...ejerciciosSeleccionados, { ...ejercicioPrevisualizado, duracion: 15 }])
+                  }
+                  setEjercicioPrevisualizado(null)
+                }}
+                className="w-2/3 text-center py-2 bg-emerald-950/40 border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-lg text-xs font-bold transition-all tracking-wider uppercase"
+              >
+                Añadir a la Sesión
+              </button>
             </div>
-          )}
 
-          {/* BOTÓN DE ACCIÓN */}
-          <button 
-            type="submit" 
-            disabled={cargando} 
-            className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-neutral-800 text-neutral-950 font-bold py-3 rounded-lg text-sm transition-colors shadow-lg"
-          >
-            {cargando ? 'Guardando en Vercel Postgres...' : 'GRABAR ENTRENAMIENTO Y ASISTENCIA'}
-          </button>
+          </div>
+        </div>
+      )}
 
-        </form>
-      </div>
     </div>
-  );
+  )
 }
-
