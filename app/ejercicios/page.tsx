@@ -4,34 +4,31 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link'; 
 import { supabase } from '@/supabaseClient';
 
-// Nombre corregido con Mayúscula inicial para cumplir las reglas estrictas de Next.js
 export default function CargarEjercicio() {
   const [formData, setFormData] = useState({
     codigo: '',
     nombre: '',
     desarrollo: '',
-    objetivos: '',
+    objetivo: '', // ← Campo unificado de objetivos/subrubro a la nueva etiqueta técnica
     cantidad_jugadores: '',
     rubro: '',      
-    subrubro: '',   
     club_asociado: '',
     multimedia_url: ''
   });
 
-  // Estados para almacenar lo que viene de la base de datos
+  // Catálogos cargados dinámicamente desde Supabase
   const [rubrosDB, setRubrosDB] = useState<any[]>([]);
   const [subrubrosDB, setSubrubrosDB] = useState<any[]>([]);
-  const [subrubrosFiltrados, setSubrubrosFiltrados] = useState<any[]>([]);
+  const [objetivosFiltrados, setObjetivosFiltrados] = useState<any[]>([]); // ← Lista reactiva limpia
 
   const [cargando, setCargando] = useState(false);
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
 
-  // 1. CARGAR LOS RUBROS Y SUBRUBROS (Modo de acceso libre sin validaciones de sesión)
+  // 1. CARGAR LOS RUBROS Y OBJETIVOS DESDE LAS TABLAS MAESTRAS
   useEffect(() => {
     const descargarFiltros = async () => {
-      // Consultas directas estables al estar el RLS desactivado en la plataforma web
       const { data: rubros } = await supabase.from('rubros').select('*');
-      const { data: subrubros } = await supabase.from('subrubros').select('*');
+      const { data: subrubros } = await supabase.from('subrubros').select('*'); // Mantiene lectura de tu tabla actual
 
       if (rubros) setRubrosDB(rubros);
       if (subrubros) setSubrubrosDB(subrubros);
@@ -40,20 +37,20 @@ export default function CargarEjercicio() {
     descargarFiltros();
   }, []);
 
-  // 2. EFECTO REACTIVO: Filtra los subrubros cuando cambia el rubro seleccionado
+  // 2. EFECTO REACTIVO: Filtra los objetivos de la lista según el rubro táctico elegido
   useEffect(() => {
     if (formData.rubro) {
       const rubroActual = rubrosDB.find(r => r.nombre === formData.rubro);
       if (rubroActual) {
         const filtrados = subrubrosDB.filter(s => s.rubro_id === rubroActual.id);
-        setSubrubrosFiltrados(filtrados);
+        setObjetivosFiltrados(filtrados);
       } else {
-        setSubrubrosFiltrados([]);
+        setObjetivosFiltrados([]);
       }
     } else {
-      setSubrubrosFiltrados([]);
+      setObjetivosFiltrados([]);
     }
-    setFormData(prev => ({ ...prev, subrubro: '' }));
+    setFormData(prev => ({ ...prev, objetivo: '' }));
   }, [formData.rubro, rubrosDB, subrubrosDB]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -73,21 +70,22 @@ export default function CargarEjercicio() {
             codigo: formData.codigo.trim(),
             nombre: formData.nombre.trim(),
             desarrollo: formData.desarrollo.trim(),
-            objetivos: formData.objetivos.trim(),
             cantidad_jugadores: formData.cantidad_jugadores.trim(),
             rubro: formData.rubro,
-            subrubro: formData.subrubro,
             club_asociado: formData.club_asociado.trim(),
-            multimedia_url: formData.multimedia_url.trim()
+            multimedia_url: formData.multimedia_url.trim(),
+            // Inyectamos el valor en espejo en ambos campos para sincronía total con dBeaver
+            subrubro: formData.objetivo,
+            objetivos: formData.objetivo
           }
         ]);
 
       if (error) throw error;
 
-      setMensaje({ tipo: 'exito', texto: '¡Ejercicio de Arquero guardado exitosamente! 🚀' });
+      setMensaje({ tipo: 'exito', texto: '¡Ejercicio táctico guardado exitosamente por Objetivo! 🚀' });
       setFormData({
-        codigo: '', nombre: '', desarrollo: '', objetivos: '',
-        cantidad_jugadores: '', rubro: '', subrubro: '', club_asociado: '', multimedia_url: ''
+        codigo: '', nombre: '', desarrollo: '', objetivo: '',
+        cantidad_jugadores: '', rubro: '', club_asociado: '', multimedia_url: ''
       });
 
     } catch (error: any) {
@@ -105,10 +103,9 @@ export default function CargarEjercicio() {
         <div className="border-b border-neutral-800 pb-6 mb-6 flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-emerald-400">TRAINING KEEPER APP</h1>
-            <p className="text-neutral-400 text-sm mt-1">Catálogo de Ejercicios — Clasificación Inteligente</p>
+            <p className="text-neutral-400 text-sm mt-1">Catálogo de Ejercicios — Clasificación Inteligente por Objetivos</p>
           </div>
-          {/* Navegación nativa segura que evita el F5 completo */}
-          <Link href="/" className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors">
+          <Link href="/" className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors bg-neutral-950">
             ← Volver al Menú
           </Link>
         </div>
@@ -136,12 +133,18 @@ export default function CargarEjercicio() {
             </div>
           </div>
 
-          {/* CLASIFICACIÓN DINÁMICA CONECTADA A RUBROS/SUBRUBROS */}
+          {/* CLASIFICACIÓN DINÁMICA CONECTADA A RUBROS Y OBJETIVOS */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-400 mb-2">Clasificación (Rubro)</label>
-              <select name="rubro" required value={formData.rubro} onChange={handleChange} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 text-neutral-300">
-                <option value="">Seleccionar Rubro...</option>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-400 mb-2">Clasificación (Tipo)</label>
+              <select 
+                name="rubro" 
+                required 
+                value={formData.rubro} 
+                onChange={handleChange} 
+                className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 text-neutral-300"
+              >
+                <option value="">Seleccionar Tipo...</option>
                 {rubrosDB.map(r => (
                   <option key={r.id} value={r.nombre}>{r.nombre}</option>
                 ))}
@@ -149,14 +152,18 @@ export default function CargarEjercicio() {
             </div>
             
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-400 mb-2">SubRubro (Subtipo)</label>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-400 mb-2">Objetivo Principal</label>
               <select 
-                name="subrubro" required value={formData.subrubro} onChange={handleChange} disabled={!formData.rubro}
+                name="objetivo" 
+                required 
+                value={formData.objetivo} 
+                onChange={handleChange} 
+                disabled={!formData.rubro}
                 className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 text-neutral-300 disabled:bg-neutral-950 disabled:text-neutral-600"
               >
-                <option value="">{formData.rubro ? "Seleccionar SubRubro..." : "Primero elija un Rubro"}</option>
-                {subrubrosFiltrados.map(s => (
-                  <option key={s.id} value={s.nombre}>{s.nombre}</option>
+                <option value="">{formData.rubro ? "Seleccionar Objetivo..." : "Primero elija un Tipo"}</option>
+                {objetivosFiltrados.map(o => (
+                  <option key={o.id} value={o.nombre}>{o.nombre}</option>
                 ))}
               </select>
             </div>
@@ -178,13 +185,8 @@ export default function CargarEjercicio() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-400 mb-2">Objetivos del Ejercicio</label>
-            <textarea name="objetivos" rows={2} placeholder="Qué se busca entrenar..." value={formData.objetivos} onChange={handleChange} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 resize-none" />
-          </div>
-
-          <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-400 mb-2">Desarrollo Paso a Paso</label>
-            <textarea name="desarrollo" required rows={4} placeholder="Secuencia del entrenamiento..." value={formData.desarrollo} onChange={handleChange} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 resize-none" />
+            <textarea name="desarrollo" required rows={5} placeholder="Secuencia detallada del entrenamiento..." value={formData.desarrollo} onChange={handleChange} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-emerald-500 resize-none leading-relaxed" />
           </div>
 
           {/* Botón Guardar */}
@@ -203,4 +205,5 @@ export default function CargarEjercicio() {
     </div>
   );
 }
+
 

@@ -39,7 +39,9 @@ export default function PlanificacionesPage() {
       }
     }
   )
-  // 1. CARGAR CATÁLOGO DE EJERCICIOS Y LISTA OFICIAL DE CLUBES
+  // 1. CARGAR CATÁLOGO DE EJERCICIOS, LISTA DE CLUBES Y MAESTRA DE ALUMNOS
+  const [todosLosAlumnosMaestro, setTodosLosAlumnosMaestro] = useState<any[]>([]) // ← Nueva variable de apoyo
+
   useEffect(() => {
     async function inicializarModulo() {
       setCargandoBase(true)
@@ -47,7 +49,7 @@ export default function PlanificacionesPage() {
       
       const { data: dataEjercicios } = await supabase
         .from('ejercicios')
-        .select('id, codigo, nombre, rubro, multimedia_url, desarrollo')
+        .select('id, codigo, nombre, rubro, multimedia_url, desarrollo, objetivos')
         .order('nombre', { ascending: true })
 
       if (dataEjercicios) setEjerciciosCatalogo(dataEjercicios)
@@ -61,6 +63,15 @@ export default function PlanificacionesPage() {
         const listaClubes = dataClubes.map(c => c.nombre).filter(Boolean) as string[]
         setClubesDisponibles(listaClubes)
       }
+
+      // Descargamos todos los alumnos para los refuerzos entre categorías
+      const { data: dataTodosAlumnos } = await supabase
+        .from('alumnos')
+        .select('id, nombre_completo, categoria, division, club')
+        .order('nombre_completo', { ascending: true })
+
+      if (dataTodosAlumnos) setTodosLosAlumnosMaestro(dataTodosAlumnos)
+
       setCargandoBase(false)
     }
     inicializarModulo()
@@ -270,9 +281,48 @@ export default function PlanificacionesPage() {
             {/* DOBLE PANEL INTERACTIVO INFERIOR */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               
-              {/* ASISTENCIA */}
+            {/* ASISTENCIA CON REFUERZOS EXTERNOS */}
               <div className="lg:col-span-1 bg-neutral-950 p-4 rounded-xl border border-neutral-800 h-[500px] flex flex-col">
-                <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-3">Plantel de Asistencia</div>
+                <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-3 flex justify-between items-center">
+                  <span>Plantel de Asistencia</span>
+                  <span className="text-[10px] text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded font-mono">Total: {arquerosFiltrados.length}</span>
+                </div>
+                
+                {clubSeleccionado && equipoSeleccionado && (
+                
+                  <div className="mb-3">
+                    <select
+                      onChange={(e) => {
+                        const alumnoId = e.target.value
+                        if (!alumnoId) return
+                        
+                        // Buscamos al arquero en la lista maestra
+                        const invitado = todosLosAlumnosMaestro.find(a => a.id === alumnoId)
+                        
+                        // Si existe y no está ya metido en el plantel de hoy, lo inyectamos en caliente
+                        if (invitado && !arquerosFiltrados.some(a => a.id === invitado.id)) {
+                          // Lo marcamos temporalmente con una bandera para el diseño visual
+                          const invitadoMarcado = { ...invitado, esInvitado: true }
+                          setArquerosFiltrados([...arquerosFiltrados, invitadoMarcado])
+                          setAsistencia(prev => ({ ...prev, [invitado.id]: true })) // Presente automático
+                        }
+                        e.target.value = "" // Resetear combo
+                      }}
+                      className="w-full text-[11px] rounded-lg border border-neutral-800 bg-neutral-900 px-2.5 py-1.5 text-neutral-300 focus:border-emerald-500/50 focus:outline-none"
+                    >
+                      <option value="">➕ Convocar arquero de otro plantel...</option>
+                      {todosLosAlumnosMaestro
+                        // Filtramos para no mostrar en la lista a los que ya pertenecen a este equipo actual
+                        .filter(a => !arquerosFiltrados.some(f => f.id === a.id))
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.nombre_completo} ({a.club} - {a.categoria || 'Sin Cat.'})
+                          </option>
+                        ))
+                      }
+                    </select>
+                  </div>
+                )}
                 
                 {!clubSeleccionado || !equipoSeleccionado ? (
                   <div className="text-neutral-600 text-xs text-center my-auto px-4 leading-relaxed">
@@ -290,13 +340,20 @@ export default function PlanificacionesPage() {
                         onClick={() => toggleAsistencia(arq.id)}
                         className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs cursor-pointer transition-all ${
                           asistencia[arq.id] 
-                            ? 'bg-emerald-950/20 border-emerald-800/30 text-neutral-200' 
+                            ? arq.esInvitado 
+                              ? 'bg-emerald-950/30 border-emerald-500/40 text-neutral-200' // Estilo resaltado para el invitado presente
+                              : 'bg-emerald-950/20 border-emerald-800/30 text-neutral-200' 
                             : 'bg-red-950/10 border-red-900/20 text-neutral-500 line-through'
                         }`}
                       >
                         <div>
-                          <p className="font-bold text-neutral-200 text-[13px]">{arq.nombre_completo}</p>
-                          <p className="text-[10px] text-neutral-500">{arq.categoria} {arq.division}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-bold text-neutral-200 text-[13px]">{arq.nombre_completo}</p>
+                            {arq.esInvitado && (
+                              <span className="bg-emerald-500/20 text-emerald-400 text-[8px] font-extrabold px-1 rounded tracking-wide border border-emerald-500/30">INVITADO</span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-neutral-500">{arq.club} — {arq.categoria} {arq.division || ''}</p>
                         </div>
                         <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${asistencia[arq.id] ? 'bg-emerald-900/40 text-emerald-400' : 'bg-red-900/20 text-red-400'}`}>
                           {asistencia[arq.id] ? 'PRESENTE' : 'AUSENTE'}
@@ -306,34 +363,35 @@ export default function PlanificacionesPage() {
                   </div>
                 )}
               </div>
-              {/* PANEL DE EJERCICIOS Y FILTRO POR RUBRO TÁCTICO */}
+              {/* PANEL DE EJERCICIOS Y FILTRO POR OBJETIVO TÁCTICO */}
               <div className="lg:col-span-2 bg-neutral-950 p-5 rounded-xl border border-neutral-800 h-[500px] flex flex-col justify-between">
                 <div className="space-y-4 flex-1 flex flex-col overflow-hidden">
                   
-                  {/* Selector de Dos Niveles Encadenado */}
+                  {/* Selector de Dos Niveles Encadenado por Objetivo */}
                   <div className="border-b border-neutral-800 pb-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    
+                    {/* A. Selector del Objetivo Principal */}
                     <div className="sm:col-span-1">
                       <select
                         value={rubroFiltrado}
                         onChange={(e) => setRubroFiltrado(e.target.value)}
                         className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-emerald-400 font-medium focus:border-emerald-500/50 focus:outline-none"
                       >
-                        <option value="">-- Todos los Rubros --</option>
-                        {Array.from(new Set(ejerciciosCatalogo.map(e => e.rubro).filter(Boolean))).map((rubro, idx) => (
-                          <option key={idx} value={rubro}>{rubro}</option>
+                        <option value="">-- Todos los Objetivos --</option>
+                        {Array.from(new Set(ejerciciosCatalogo.map(e => e.objetivos).filter(Boolean))).map((obj: any, idx) => (
+                          <option key={idx} value={obj}>{obj}</option>
                         ))}
                       </select>
                     </div>
 
+                    {/* B. Selector de Ejercicios Filtrado Automáticamente */}
                     <div className="sm:col-span-2">
                       <select
                         onChange={(e) => {
                           const ejercicioId = e.target.value
                           if (ejercicioId) {
                             const encontrado = ejerciciosCatalogo.find(ex => ex.id === ejercicioId)
-                            if (encontrado) {
-                              setEjercicioPrevisualizado(encontrado)
-                            }
+                            if (encontrado) setEjercicioPrevisualizado(encontrado)
                           }
                           e.target.value = ""
                         }}
@@ -341,7 +399,7 @@ export default function PlanificacionesPage() {
                       >
                         <option value="">-- Seleccionar Ejercicio Táctico --</option>
                         {ejerciciosCatalogo
-                          .filter(ej => !rubroFiltrado || ej.rubro === rubroFiltrado)
+                          .filter(ej => !rubroFiltrado || ej.objetivos === rubroFiltrado)
                           .map((ej) => (
                             <option key={ej.id} value={ej.id}>
                               [{ej.codigo}] {ej.nombre}
@@ -352,7 +410,7 @@ export default function PlanificacionesPage() {
                     </div>
                   </div>
 
-                  {/* Estructura de la Sesión */}
+                  {/* Estructura de la Sesión Scrolleable */}
                   <div className="flex-1 overflow-y-auto pr-1 space-y-3">
                     <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">📋 Estructura de la Sesión</div>
                     
@@ -388,7 +446,7 @@ export default function PlanificacionesPage() {
                               </div>
                             </div>
                             
-                            <p className="text-[11px] text-neutral-400">Área Táctica: <span className="text-neutral-300">{ej.rubro}</span></p>
+                            <p className="text-[11px] text-neutral-400">Foco Técnico: <span className="text-neutral-300">{ej.objetivos || ej.subrubro}</span></p>
                             
                             {ej.desarrollo && (
                               <div className="text-[11px] text-neutral-300 bg-neutral-950/50 p-2.5 rounded-lg border border-neutral-800/60 my-1.5 leading-relaxed whitespace-pre-wrap">
@@ -420,8 +478,8 @@ export default function PlanificacionesPage() {
 
           </form>
         )}
-
       </div>
+
       {/* VENTANA EMERGENTE: MODAL DE PREVISUALIZACIÓN TÉCNICA */}
       {ejercicioPrevisualizado && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">

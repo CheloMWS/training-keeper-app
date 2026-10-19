@@ -19,7 +19,8 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-white p-6 md:p-12 font-sans">
+    <div className="min-h-screen bg-neutral-100 dark:bg-neutral-950 text-neutral-900 dark:text-white p-6 transition-colors duration-300 ...">
+  
       <div className="max-w-6xl mx-auto bg-neutral-900 border border-neutral-800 rounded-xl p-8 shadow-2xl space-y-8">
         
         {/* Cabecera Principal */}
