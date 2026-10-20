@@ -85,6 +85,7 @@ export default function HistorialPlanificacionesPage() {
     }
     inicializarHistorial()
   }, [supabase])
+
   // 2. FILTRADO EN CASCADA COMPACTO (Fecha, Club y Categoría)
   useEffect(() => {
     let resultado = [...todosLosEntrenamientos]
@@ -130,7 +131,7 @@ export default function HistorialPlanificacionesPage() {
 
       if (!err1 && rutina) setRutinaDetalle(rutina)
       if (!err2 && asistencia) setAsistenciaDetalle(asistencia)
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Error al cargar detalle interactivo:', err)
     } finally {
       setCargandoDetalle(false)
@@ -149,6 +150,7 @@ export default function HistorialPlanificacionesPage() {
   const toggleAsistenciaArquero = (id: string) => {
     setAsistenciaDetalle(prev => prev.map(item => item.id === id ? { ...item, presente: !item.presente } : item))
   }
+
   // 4. GUARDAR CAMBIOS MODIFICADOS EN LA BASE DE DATOS
   const handleGuardarCambios = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -166,10 +168,11 @@ export default function HistorialPlanificacionesPage() {
       if (errDelEjercicios) throw errDelEjercicios
 
       if (rutinaDetalle.length > 0) {
-        const filasEjercicios = rutinaDetalle.map(item => ({
+        const filasEjercicios = rutinaDetalle.map((item, idx) => ({
           entrenamiento_id: seleccionado.id,
           ejercicio_id: item.ejercicio_id,
-          duracion_minutos: item.duracion_minutos
+          duracion_minutos: item.duracion_minutos,
+          orden: idx + 1 // ← Inyecta 1, 2, 3... cumpliendo el NOT NULL de la tabla en Supabase
         }))
 
         const { error: errInsEjercicios } = await supabase
@@ -190,13 +193,20 @@ export default function HistorialPlanificacionesPage() {
       }
 
       setMensajeExito('¡Sesión de entrenamiento modificada y guardada con éxito en Supabase! 🚀')
-    } catch (err) {
-      console.error('Error crítico al modificar entrenamiento:', err)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error desconocido';
+      const sbErr = err && typeof err === 'object' ? err as Record<string, any> : {};
+
+      console.error('Error descriptivo al modificar entrenamiento:', {
+        mensaje: msg,
+        objetoCompleto: err,
+        supabaseError: sbErr.message || sbErr.hint || sbErr.details
+      })
+      alert(`No se pudo modificar: ${sbErr.message || 'Verifique restricciones de columnas'}`)
     } finally {
       setGuardando(false)
     }
   }
-
   return (
     <div className="min-h-screen bg-neutral-950 text-white p-6 md:p-12 font-sans">
       <div className="max-w-7xl mx-auto bg-neutral-900 border border-neutral-800 rounded-xl p-8 shadow-2xl space-y-6">
@@ -267,6 +277,7 @@ export default function HistorialPlanificacionesPage() {
             Limpiar Filtros
           </button>
         </div>
+
         {/* DOBLE PANEL INTERACTIVO DE ADMINISTRACIÓN */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
@@ -299,7 +310,6 @@ export default function HistorialPlanificacionesPage() {
               ))
             )}
           </div>
-
           {/* COLUMNA DERECHA: FORMULARIO INTERACTIVO DE EDICIÓN EN CALIENTE */}
           <div className="lg:col-span-2 bg-neutral-950 p-5 rounded-xl border border-neutral-800 h-[520px] flex flex-col justify-between">
             {!seleccionado ? (
@@ -420,3 +430,4 @@ export default function HistorialPlanificacionesPage() {
     </div>
   )
 }
+

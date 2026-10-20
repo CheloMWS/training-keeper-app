@@ -39,14 +39,22 @@ export default function PlanificacionesPage() {
       }
     }
   )
-  // 1. CARGAR CATÁLOGO DE EJERCICIOS, LISTA DE CLUBES Y MAESTRA DE ALUMNOS
-  const [todosLosAlumnosMaestro, setTodosLosAlumnosMaestro] = useState<any[]>([]) // ← Nueva variable de apoyo
+  // 1. CARGAR CATÁLOGO, JUGADORES COMPLETOS Y FILTRAR CLUBES POR PERMISO DEL PROFESOR
+  const [todosLosAlumnosMaestro, setTodosLosAlumnosMaestro] = useState<any[]>([])
 
   useEffect(() => {
-    async function inicializarModulo() {
+    async function inicializarModuloFiltrado() {
       setCargandoBase(true)
-      await supabase.auth.getSession()
+      const { data: { session } } = await supabase.auth.getSession()
       
+      if (!session?.user) {
+        setCargandoBase(false)
+        return
+      }
+
+      const usuarioId = session.user.id
+
+      // A. Descargamos el catálogo de ejercicios (Compartido para todos)
       const { data: dataEjercicios } = await supabase
         .from('ejercicios')
         .select('id, codigo, nombre, rubro, multimedia_url, desarrollo, objetivos')
@@ -54,17 +62,7 @@ export default function PlanificacionesPage() {
 
       if (dataEjercicios) setEjerciciosCatalogo(dataEjercicios)
 
-      const { data: dataClubes } = await supabase
-        .from('clubes')
-        .select('nombre')
-        .order('nombre', { ascending: true })
-
-      if (dataClubes) {
-        const listaClubes = dataClubes.map(c => c.nombre).filter(Boolean) as string[]
-        setClubesDisponibles(listaClubes)
-      }
-
-      // Descargamos todos los alumnos para los refuerzos entre categorías
+      // B. Descargamos la lista maestra de alumnos
       const { data: dataTodosAlumnos } = await supabase
         .from('alumnos')
         .select('id, nombre_completo, categoria, division, club')
@@ -72,12 +70,25 @@ export default function PlanificacionesPage() {
 
       if (dataTodosAlumnos) setTodosLosAlumnosMaestro(dataTodosAlumnos)
 
+      // C. Filtramos los Clubes: Leemos la tabla de permisos del usuario logueado en caliente
+      const { data: misPermisos } = await supabase
+        .from('entrenador_permisos')
+        .select('club_asignado')
+        .eq('user_id', usuarioId)
+
+      if (misPermisos && misPermisos.length > 0) {
+        const clubesPermitidos = Array.from(new Set(misPermisos.map(p => p.club_asignado).filter(Boolean))) as string[]
+        setClubesDisponibles(clubesPermitidos)
+      } else {
+        setClubesDisponibles([])
+      }
+
       setCargandoBase(false)
     }
-    inicializarModulo()
+    inicializarModuloFiltrado()
   }, [supabase])
 
-  // 2. BUSCAR EQUIPOS DIRECTAMENTE DESDE LA TABLA 'CATEGORIAS'
+  // 2. BUSCAR EQUIPOS FILTRADOS ESTRICTAMENTE POR SUS CATEGORÍAS ASIGNADAS
   useEffect(() => {
     if (!clubSeleccionado) {
       setEquiposDisponibles([])
@@ -85,21 +96,26 @@ export default function PlanificacionesPage() {
       return
     }
 
-    async function cargarCategoriasPermanentes() {
-      const { data, error } = await supabase
-        .from('categorias')
-        .select('nombre')
-        .order('nombre', { ascending: true })
+    async function cargarCategoriasFiltradas() {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) return
 
-      if (error) console.error("Error Supabase Categorias:", error.message)
-      
-      if (data) {
-        const listaCategorias = data.map(cat => cat.nombre).filter(Boolean) as string[]
-        setEquiposDisponibles(listaCategorias)
+      const { data: misCategorias } = await supabase
+        .from('entrenador_permisos')
+        .select('categoria_asignada')
+        .eq('user_id', session.user.id)
+        .eq('club_asignado', clubSeleccionado)
+
+      if (misCategorias && misCategorias.length > 0) {
+        const categoriasPermitidas = Array.from(new Set(misCategorias.map(c => c.categoria_asignada).filter(Boolean))) as string[]
+        setEquiposDisponibles(categoriasPermitidas)
+      } else {
+        setEquiposDisponibles([])
       }
     }
-    cargarCategoriasPermanentes()
+    cargarCategoriasFiltradas()
   }, [clubSeleccionado, supabase])
+
   // 3. CARGAR JUGADORES FILTRADOS POR CLUB Y CATEGORÍA REAL
   useEffect(() => {
     if (!clubSeleccionado || !equipoSeleccionado) {
@@ -146,36 +162,71 @@ export default function PlanificacionesPage() {
   // 4. GUARDAR EL ENTRENAMIENTO COMPLETO EN LAS TABLAS ASOCIADAS
   const handleGuardarTodo = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!clubSeleccionado || !equipoSeleccionado || ejerciciosSeleccionados.length === 0) return
+    if (!clubSeleccionado || !equipoSeleccionado) {
+      alert('Por favor, selecciona Club y Categoría antes de guardar.')
+      return
+    }
     setGuardando(true)
-    setMensajeExito('')
 
     try {
-      const { data: nuevoEntrenamiento, error: errEntrenamiento } = await supabase
+      // Capturamos los datos del formulario de manera nativa e independiente para evitar variables no declaradas
+      const target = e.target as any
+      const stringFecha = target.fecha?.value || new Date().toISOString().split('T')[0]
+      const stringObjetivo = target.objetivo?.value || target.objetivo_sesion?.value || 'General táctico'
+      const stringNumero = parseInt(target.numero_entrenamiento?.value) || 1
+      const stringObs = target.observaciones?.value || ''
+
+      // A. Insertamos el entrenamiento principal en la base de datos
+      const { data: entros, error: errEntro } = await supabase
         .from('entrenamientos')
-        .insert([{ fecha, club: clubSeleccionado }])
+        .insert([
+          {
+            fecha: stringFecha,
+            club: clubSeleccionado,
+            categoria: equipoSeleccionado,
+            division : equipoSeleccionado,
+            objetivo_sesion: stringObjetivo.trim(),
+            numero_entrenamiento: stringNumero,
+            observaciones: stringObs.trim()
+          }
+        ])
         .select()
-        .single()
 
-      if (errEntrenamiento) throw errEntrenamiento
+      if (errEntro) {
+        console.error("Error directo en tabla entrenamientos:", errEntro)
+        throw errEntro
+      }
 
-      const entrenamientoId = nuevoEntrenamiento.id
+      if (!entros || entros.length === 0) {
+        throw new Error('No se pudo recuperar el ID del entrenamiento generado')
+      }
+      
+      // Capturamos el ID autogenerado por Supabase (soporta objeto o array)
+      const nuevoEntrenamientoId = Array.isArray(entros) ? entros[0].id : entros.id
 
-      const filasEjercicios = ejerciciosSeleccionados.map(ej => ({
-        entrenamiento_id: entrenamientoId,
-        ejercicio_id: ej.id,
-        duracion_minutos: ej.duracion
-      }))
+      // B. Insertamos el cronograma de ejercicios asociados
+      if (ejerciciosSeleccionados.length > 0) {
+        const filasEjercicios = ejerciciosSeleccionados.map((ej, idx) => ({
+          entrenamiento_id: nuevoEntrenamientoId,
+          ejercicio_id: ej.id,
+          duracion_minutos: parseInt(ej.duracion) || 15,
+          orden: idx + 1 // ← Inyecta 1, 2, 3... cumpliendo el NOT NULL de Supabase
+        }))
 
-      const { error: errRelacionEjercicios } = await supabase
-        .from('entrenamiento_ejercicios')
-        .insert(filasEjercicios)
+        const { error: errEjercicios } = await supabase
+          .from('entrenamiento_ejercicios')
+          .insert(filasEjercicios)
 
-      if (errRelacionEjercicios) throw errRelacionEjercicios
+        if (errEjercicios) {
+          console.error("Error directo en tabla entrenamiento_ejercicios:", errEjercicios)
+          throw errEjercicios
+        }
+      }
 
+      // C. Insertamos el control de asistencia diario del plantel e invitados
       if (arquerosFiltrados.length > 0) {
-        const filasAsistencia = arquerosFiltrados.map(arq => ({
-          entrenamiento_id: entrenamientoId,
+        const filasAsistencia = arquerosFiltrados.map((arq) => ({
+          entrenamiento_id: nuevoEntrenamientoId,
           alumno_id: arq.id,
           presente: asistencia[arq.id] ?? false
         }))
@@ -184,15 +235,29 @@ export default function PlanificacionesPage() {
           .from('asistencias')
           .insert(filasAsistencia)
 
-        if (errAsistencia) throw errAsistencia
+        if (errAsistencia) {
+          console.error("Error directo en tabla asistencias:", errAsistencia)
+          throw errAsistencia
+        }
       }
 
-      setMensajeExito('¡Planificación, categoría y asistencia guardados con éxito en Supabase! 🚀')
+      // Limpieza de la interfaz tras el guardado exitoso
+      alert('¡Planificación del Entrenamiento guardada de forma exitosa en Supabase! 🚀🔥')
+      
+      // Intentamos resetear el formulario visual de HTML
+      try { target.reset() } catch(e){}
+      
       setEjerciciosSeleccionados([])
       setClubSeleccionado('')
       setEquipoSeleccionado('')
-    } catch (err) {
-      console.error('Error crítico al procesar la planificación completa:', err)
+
+    } catch (err: any) {
+      console.error('Error descriptivo al procesar la planificación completa:', {
+        mensaje: err?.message || 'Error de estructura',
+        detalles: err?.details || 'Verifique restricciones de columnas en Supabase',
+        pista: err?.hint || 'Revise tipos de datos (números/textos)'
+      })
+      alert(`No se pudo guardar: ${err?.message || 'Error de sincronización'}`)
     } finally {
       setGuardando(false)
     }
