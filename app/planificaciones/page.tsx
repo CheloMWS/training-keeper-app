@@ -7,39 +7,40 @@ import { createBrowserClient } from '@supabase/ssr'
 export default function PlanificacionesPage() {
   const router = useRouter()
 
-  // --- ESTADOS DE DATOS DESDE SUPABASE ---
+  // --- CATALOGOS DE BUSQUEDA FILTRADOS POR PERMISO ---
   const [clubesDisponibles, setClubesDisponibles] = useState<string[]>([])
   const [equiposDisponibles, setEquiposDisponibles] = useState<string[]>([])
-  const [ejerciciosCatalogo, setEjerciciosCatalogo] = useState<any[]>([])
   const [arquerosFiltrados, setArquerosFiltrados] = useState<any[]>([])
+  const [ejerciciosCatalogo, setEjerciciosCatalogo] = useState<any[]>([])
 
-  // --- ESTADOS DEL FORMULARIO ACTUAL ---
-  const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0])
+  // --- FILTROS SELECCIONADOS ---
   const [clubSeleccionado, setClubSeleccionado] = useState('')
   const [equipoSeleccionado, setEquipoSeleccionado] = useState('')
+  const [numeroEntrenamiento, setNumeroEntrenamiento] = useState('1')
+  
+  // --- OBJETIVOS INTERNOS FILTRADOS ---
+  const [filtroObjetivo, setFiltroObjetivo] = useState('')
+  const [objetivosUnicos, setObjetivosUnicos] = useState<string[]>([])
+
+  // --- FORMULARIO DE RAMPAS, RUTINAS Y ASISTENCIA ---
   const [ejerciciosSeleccionados, setEjerciciosSeleccionados] = useState<any[]>([])
   const [asistencia, setAsistencia] = useState<{ [key: string]: boolean }>({})
+  const [objetivoSesion, setObjetivoSesion] = useState('')
+  const [observacionesGlobales, setObservacionesGlobales] = useState('')
 
-  // --- ESTADOS NUEVOS PARA MODAL Y FILTRO POR RUBRO TÁCTICO ---
-  const [ejercicioPrevisualizado, setEjercicioPrevisualizado] = useState<any | null>(null)
-  const [rubroFiltrado, setRubroFiltrado] = useState('')
-
-  // --- ESTADOS DE CARGA Y PROCESO ---
+  // --- CONTROLES DE PANTALLA ---
   const [cargandoBase, setCargandoBase] = useState(true)
   const [guardando, setGuardando] = useState(false)
-  const [mensajeExito, setMensajeExito] = useState('')
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-      }
+      auth: { persistSession: true, autoRefreshToken: true }
     }
   )
-  // 1. CARGAR CATÁLOGO, JUGADORES COMPLETOS Y FILTRAR CLUBES POR PERMISO DEL PROFESOR
+
+  // 1. CARGA INICIAL: FILTRAR CLUBES POR PERMISO DEL PROFESOR LOGUEADO
   const [todosLosAlumnosMaestro, setTodosLosAlumnosMaestro] = useState<any[]>([])
 
   useEffect(() => {
@@ -57,10 +58,14 @@ export default function PlanificacionesPage() {
       // A. Descargamos el catálogo de ejercicios (Compartido para todos)
       const { data: dataEjercicios } = await supabase
         .from('ejercicios')
-        .select('id, codigo, nombre, rubro, multimedia_url, desarrollo, objetivos')
+        .select('id, codigo, nombre, rubro, multimedia_url, desarrollo, objetivos, subrubro')
         .order('nombre', { ascending: true })
 
-      if (dataEjercicios) setEjerciciosCatalogo(dataEjercicios)
+      if (dataEjercicios) {
+        setEjerciciosCatalogo(dataEjercicios)
+        const objs = Array.from(new Set(dataEjercicios.map(e => e.objetivos || e.subrubro).filter(Boolean))) as string[]
+        setObjetivosUnicos(objs)
+      }
 
       // B. Descargamos la lista maestra de alumnos
       const { data: dataTodosAlumnos } = await supabase
@@ -70,7 +75,7 @@ export default function PlanificacionesPage() {
 
       if (dataTodosAlumnos) setTodosLosAlumnosMaestro(dataTodosAlumnos)
 
-      // C. Filtramos los Clubes: Leemos la tabla de permisos del usuario logueado en caliente
+      // C. Filtramos los Clubes por permisos
       const { data: misPermisos } = await supabase
         .from('entrenador_permisos')
         .select('club_asignado')
@@ -87,7 +92,6 @@ export default function PlanificacionesPage() {
     }
     inicializarModuloFiltrado()
   }, [supabase])
-
   // 2. BUSCAR EQUIPOS FILTRADOS ESTRICTAMENTE POR SUS CATEGORÍAS ASIGNADAS
   useEffect(() => {
     if (!clubSeleccionado) {
@@ -126,7 +130,7 @@ export default function PlanificacionesPage() {
     async function cargarJugadoresFiltrados() {
       const { data, error } = await supabase
         .from('alumnos')
-        .select('id, nombre_completo, categoria, division')
+        .select('id, nombre_completo, categoria, division, club')
         .eq('club', clubSeleccionado)
         .eq('categoria', equipoSeleccionado)
         .order('nombre_completo', { ascending: true })
@@ -145,21 +149,53 @@ export default function PlanificacionesPage() {
     cargarJugadoresFiltrados()
   }, [clubSeleccionado, equipoSeleccionado, supabase])
 
-  // --- MANIPULACIÓN DE EJERCICIOS EN EL VISOR DE RUTINA ---
-  const cambiarDuracionEjercicio = (id: string, minutos: number) => {
-    setEjerciciosSeleccionados(
-      ejerciciosSeleccionados.map(e => e.id === id ? { ...e, duracion: minutos } : e)
-    )
-  }
+  // 4. AUTOMATIZACIÓN: CALCULAR EL PRÓXIMO NÚMERO DE ENTRENAMIENTO CORRELATIVO
+  useEffect(() => {
+    if (!clubSeleccionado || !equipoSeleccionado) return
 
-  const quitarEjercicioDeRutina = (id: string) => {
-    setEjerciciosSeleccionados(ejerciciosSeleccionados.filter(e => e.id !== id))
-  }
+    async function buscarUltimoNumero() {
+      const { data } = await supabase
+        .from('entrenamientos')
+        .select('numero_entrenamiento')
+        .eq('club', clubSeleccionado)
+        .eq('categoria', equipoSeleccionado)
+        .order('numero_entrenamiento', { ascending: false })
+        .limit(1)
 
+      if (data && data.length > 0) {
+        const ultimoNumero = data?.numero_entrenamiento || data[0]?.numero_entrenamiento || 0
+        const siguienteNumero = parseInt(ultimoNumero) + 1
+        setNumeroEntrenamiento(siguienteNumero.toString())
+      } else {
+        setNumeroEntrenamiento('1')
+      }
+    }
+    buscarUltimoNumero()
+  }, [clubSeleccionado, equipoSeleccionado, supabase])
+
+  // Lógicas interactivas de manipulación de la grilla y el visor local
   const toggleAsistencia = (id: string) => {
     setAsistencia(prev => ({ ...prev, [id]: !prev[id] }))
   }
-  // 4. GUARDAR EL ENTRENAMIENTO COMPLETO EN LAS TABLAS ASOCIADAS
+
+  const agregarEjercicioRutina = (ej: any) => {
+    const yaExiste = ejerciciosSeleccionados.some(item => item.id === ej.id)
+    if (yaExiste) {
+      alert('Este ejercicio ya se encuentra cargado en el visor actual.')
+      return
+    }
+    setEjerciciosSeleccionados([...ejerciciosSeleccionados, { ...ej, duracion: '15' }])
+  }
+
+  const cambiarDuracionEjercicio = (id: string, mins: string) => {
+    setEjerciciosSeleccionados(prev => prev.map(item => item.id === id ? { ...item, duracion: mins } : item))
+  }
+
+  const quitarEjercicioRutina = (id: string) => {
+    setEjerciciosSeleccionados(prev => prev.filter(item => item.id !== id))
+  }
+
+  // 5. FUNCIÓN DE GUARDADO COMPLETO RE-ALINEADO CON SINTAXIS REMOTA
   const handleGuardarTodo = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!clubSeleccionado || !equipoSeleccionado) {
@@ -169,461 +205,311 @@ export default function PlanificacionesPage() {
     setGuardando(true)
 
     try {
-      // Capturamos los datos del formulario de manera nativa e independiente para evitar variables no declaradas
       const target = e.target as any
-      const stringFecha = target.fecha?.value || new Date().toISOString().split('T')[0]
-      const stringObjetivo = target.objetivo?.value || target.objetivo_sesion?.value || 'General táctico'
-      const stringNumero = parseInt(target.numero_entrenamiento?.value) || 1
-      const stringObs = target.observaciones?.value || ''
+      const rawFecha = target.fecha?.value || new Date().toISOString().split('T')[0]
+      const stringObjetivo = target.objetivo?.value || target.objetivo_sesion?.value || objetivoSesion || 'General táctico'
+      const stringObs = observacionesGlobales || ''
 
-      // A. Insertamos el entrenamiento principal en la base de datos
-      const { data: entros, error: errEntro } = await supabase
+      const { data: insertoPlanifExito, error: errorInyeccionTablaEntrenamientos } = await supabase
         .from('entrenamientos')
         .insert([
           {
-            fecha: stringFecha,
+            fecha: rawFecha,
             club: clubSeleccionado,
             categoria: equipoSeleccionado,
-            division : equipoSeleccionado,
+            division: equipoSeleccionado,
             objetivo_sesion: stringObjetivo.trim(),
-            numero_entrenamiento: stringNumero,
+            numero_entrenamiento: parseInt(numeroEntrenamiento) || 1,
             observaciones: stringObs.trim()
           }
         ])
         .select()
 
-      if (errEntro) {
-        console.error("Error directo en tabla entrenamientos:", errEntro)
-        throw errEntro
-      }
-
-      if (!entros || entros.length === 0) {
-        throw new Error('No se pudo recuperar el ID del entrenamiento generado')
-      }
+      if (errorInyeccionTablaEntrenamientos) throw errorInyeccionTablaEntrenamientos
+      if (!insertoPlanifExito || insertoPlanifExito.length === 0) throw new Error('No se pudo recuperar la fila generada')
       
-      // Capturamos el ID autogenerado por Supabase (soporta objeto o array)
-      const nuevoEntrenamientoId = Array.isArray(entros) ? entros[0].id : entros.id
+      const nuevoEntrenamientoId = insertoPlanifExito[0]?.id || insertoPlanifExito.id
 
-      // B. Insertamos el cronograma de ejercicios asociados
       if (ejerciciosSeleccionados.length > 0) {
         const filasEjercicios = ejerciciosSeleccionados.map((ej, idx) => ({
           entrenamiento_id: nuevoEntrenamientoId,
           ejercicio_id: ej.id,
           duracion_minutos: parseInt(ej.duracion) || 15,
-          orden: idx + 1 // ← Inyecta 1, 2, 3... cumpliendo el NOT NULL de Supabase
+          orden: idx + 1
         }))
-
-        const { error: errEjercicios } = await supabase
-          .from('entrenamiento_ejercicios')
-          .insert(filasEjercicios)
-
-        if (errEjercicios) {
-          console.error("Error directo en tabla entrenamiento_ejercicios:", errEjercicios)
-          throw errEjercicios
-        }
+        const { error: errEjercicios } = await supabase.from('entrenamiento_ejercicios').insert(filasEjercicios)
+        if (errEjercicios) throw errEjercicios
       }
 
-      // C. Insertamos el control de asistencia diario del plantel e invitados
       if (arquerosFiltrados.length > 0) {
         const filasAsistencia = arquerosFiltrados.map((arq) => ({
           entrenamiento_id: nuevoEntrenamientoId,
           alumno_id: arq.id,
           presente: asistencia[arq.id] ?? false
         }))
-
-        const { error: errAsistencia } = await supabase
-          .from('asistencias')
-          .insert(filasAsistencia)
-
-        if (errAsistencia) {
-          console.error("Error directo en tabla asistencias:", errAsistencia)
-          throw errAsistencia
-        }
+        const { error: errAsistencia } = await supabase.from('asistencias').insert(filasAsistencia)
+        if (errAsistencia) throw errAsistencia
       }
 
-      // Limpieza de la interfaz tras el guardado exitoso
       alert('¡Planificación del Entrenamiento guardada de forma exitosa en Supabase! 🚀🔥')
-      
-      // Intentamos resetear el formulario visual de HTML
-      try { target.reset() } catch(e){}
-      
       setEjerciciosSeleccionados([])
+      setObjetivoSesion('')
+      setObservacionesGlobales('')
       setClubSeleccionado('')
       setEquipoSeleccionado('')
 
     } catch (err: any) {
-      console.error('Error descriptivo al procesar la planificación completa:', {
-        mensaje: err?.message || 'Error de estructura',
-        detalles: err?.details || 'Verifique restricciones de columnas en Supabase',
-        pista: err?.hint || 'Revise tipos de datos (números/textos)'
-      })
-      alert(`No se pudo guardar: ${err?.message || 'Error de sincronización'}`)
+      console.error('Error descriptivo en la planificación:', err)
+      alert(`No se pudo guardar: ${err?.message || 'Error de sincronización con Supabase'}`)
     } finally {
       setGuardando(false)
     }
   }
+
+  const ejerciciosFiltradosCatalogo = filtroObjetivo
+    ? ejerciciosCatalogo.filter(e => e.objetivos === filtroObjetivo || e.subrubro === filtroObjetivo)
+    : ejerciciosCatalogo
   return (
-    <div className="min-h-screen bg-neutral-950 text-white p-6 md:p-12 font-sans">
-      <div className="max-w-7xl mx-auto bg-neutral-900 border border-neutral-800 rounded-xl p-8 shadow-2xl space-y-6">
+    <div className="min-h-screen bg-neutral-950 text-white p-4 md:p-6 font-sans">
+      <form onSubmit={handleGuardarTodo} className="max-w-7xl mx-auto space-y-4">
         
         {/* Encabezado */}
-        <div className="border-b border-neutral-800 pb-6 flex justify-between items-center">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex justify-between items-center shadow-lg shrink-0">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-emerald-400">TRAINING KEEPER APP</h1>
-            <p className="text-neutral-400 text-sm mt-1">Planificación Avanzada — Filtro por Equipo y Asistencia Automatizada</p>
+            <h1 className="text-xl font-bold tracking-tight text-emerald-400">TRAINING KEEPER APP</h1>
+            <p className="text-neutral-400 text-xs mt-0.5">Planificador Multiusuario — Armado de Sesiones con Filtros por Permisos</p>
           </div>
           <button 
-            type="button"
-            onClick={() => router.push('/')} 
-            className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors bg-neutral-950"
+            type="button" onClick={() => router.push('/')} 
+            className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors bg-neutral-950 cursor-pointer"
           >
             ← Volver al Menú
           </button>
         </div>
 
-        {mensajeExito && (
-          <div className="bg-emerald-950/40 border border-emerald-500/50 p-4 rounded-xl text-emerald-400 text-xs text-center font-semibold">
-            {mensajeExito}
+        {/* BARRA SUPERIOR: CONFIGURACIÓN MÁSTER DEL ENTRENAMIENTO */}
+        <div className="bg-neutral-900 p-4 rounded-xl border border-neutral-800 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end shadow-md shrink-0">
+          <div>
+            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Fecha Práctica</label>
+            <input 
+              type="date" name="fecha" required defaultValue={new Date().toISOString().split('T')[0]}
+              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50 font-mono"
+            />
           </div>
-        )}
-
-        {cargandoBase ? (
-          <div className="text-center py-12 text-neutral-500 text-xs">Sincronizando catálogos estratégicos de Supabase...</div>
-        ) : (
-          <form onSubmit={handleGuardarTodo} className="space-y-6">
-            
-            {/* BARRA DE FILTROS SUPERIOR EN UNA SOLA LÍNEA HORIZONTAL */}
-            <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-              <div>
-                <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Fecha</label>
-                <input 
-                  type="date" required value={fecha} onChange={(e) => setFecha(e.target.value)}
-                  className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-neutral-100 focus:border-emerald-500/50 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Club</label>
-                <select 
-                  required value={clubSeleccionado} onChange={(e) => {
-                    setClubSeleccionado(e.target.value)
-                    setEquipoSeleccionado('')
-                  }}
-                  className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-neutral-100 focus:border-emerald-500/50 focus:outline-none"
-                >
-                  <option value="">-- Elegir Club --</option>
-                  {clubesDisponibles.map((club, idx) => (
-                    <option key={idx} value={club}>{club}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Categoría</label>
-                <select 
-                  required 
-                  disabled={!clubSeleccionado}
-                  value={equipoSeleccionado} 
-                  onChange={(e) => setEquipoSeleccionado(e.target.value)}
-                  className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-neutral-100 focus:border-emerald-500/50 focus:outline-none disabled:opacity-40"
-                >
-                  <option value="">{clubSeleccionado ? '-- Elegir Categoría --' : '-- Primero elige un Club --'}</option>
-                  {equiposDisponibles.map((equipo, idx) => (
-                    <option key={idx} value={equipo}>{equipo}</option>
-                  ))}
-                </select>
-              </div>
-
-              <button
-                type="submit"
-                disabled={guardando || !clubSeleccionado || !equipoSeleccionado || ejerciciosSeleccionados.length === 0}
-                className="w-full text-center py-2 bg-emerald-950/40 border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-lg text-xs font-bold transition-all disabled:opacity-30 tracking-wider uppercase"
-              >
-                {guardando ? 'Guardando...' : 'Registrar Sesión'}
-              </button>
-            </div>
-
-            {/* DOBLE PANEL INTERACTIVO INFERIOR */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              
-            {/* ASISTENCIA CON REFUERZOS EXTERNOS */}
-              <div className="lg:col-span-1 bg-neutral-950 p-4 rounded-xl border border-neutral-800 h-[500px] flex flex-col">
-                <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-3 flex justify-between items-center">
-                  <span>Plantel de Asistencia</span>
-                  <span className="text-[10px] text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded font-mono">Total: {arquerosFiltrados.length}</span>
-                </div>
-                
-                {clubSeleccionado && equipoSeleccionado && (
-                
-                  <div className="mb-3">
-                    <select
-                      onChange={(e) => {
-                        const alumnoId = e.target.value
-                        if (!alumnoId) return
-                        
-                        // Buscamos al arquero en la lista maestra
-                        const invitado = todosLosAlumnosMaestro.find(a => a.id === alumnoId)
-                        
-                        // Si existe y no está ya metido en el plantel de hoy, lo inyectamos en caliente
-                        if (invitado && !arquerosFiltrados.some(a => a.id === invitado.id)) {
-                          // Lo marcamos temporalmente con una bandera para el diseño visual
-                          const invitadoMarcado = { ...invitado, esInvitado: true }
-                          setArquerosFiltrados([...arquerosFiltrados, invitadoMarcado])
-                          setAsistencia(prev => ({ ...prev, [invitado.id]: true })) // Presente automático
-                        }
-                        e.target.value = "" // Resetear combo
-                      }}
-                      className="w-full text-[11px] rounded-lg border border-neutral-800 bg-neutral-900 px-2.5 py-1.5 text-neutral-300 focus:border-emerald-500/50 focus:outline-none"
-                    >
-                      <option value="">➕ Convocar arquero de otro plantel...</option>
-                      {todosLosAlumnosMaestro
-                        // Filtramos para no mostrar en la lista a los que ya pertenecen a este equipo actual
-                        .filter(a => !arquerosFiltrados.some(f => f.id === a.id))
-                        .map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.nombre_completo} ({a.club} - {a.categoria || 'Sin Cat.'})
-                          </option>
-                        ))
-                      }
-                    </select>
-                  </div>
-                )}
-                
-                {!clubSeleccionado || !equipoSeleccionado ? (
-                  <div className="text-neutral-600 text-xs text-center my-auto px-4 leading-relaxed">
-                    Selecciona Club y Categoría en la barra superior para desplegar el plantel.
-                  </div>
-                ) : arquerosFiltrados.length === 0 ? (
-                  <div className="text-neutral-500 text-xs text-center my-auto">
-                    No hay jugadores cargados en esta división.
-                  </div>
-                ) : (
-                  <div className="space-y-1.5 overflow-y-auto flex-1 pr-1">
-                    {arquerosFiltrados.map((arq) => (
-                      <div 
-                        key={arq.id} 
-                        onClick={() => toggleAsistencia(arq.id)}
-                        className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs cursor-pointer transition-all ${
-                          asistencia[arq.id] 
-                            ? arq.esInvitado 
-                              ? 'bg-emerald-950/30 border-emerald-500/40 text-neutral-200' // Estilo resaltado para el invitado presente
-                              : 'bg-emerald-950/20 border-emerald-800/30 text-neutral-200' 
-                            : 'bg-red-950/10 border-red-900/20 text-neutral-500 line-through'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <p className="font-bold text-neutral-200 text-[13px]">{arq.nombre_completo}</p>
-                            {arq.esInvitado && (
-                              <span className="bg-emerald-500/20 text-emerald-400 text-[8px] font-extrabold px-1 rounded tracking-wide border border-emerald-500/30">INVITADO</span>
-                            )}
-                          </div>
-                          <p className="text-[10px] text-neutral-500">{arq.club} — {arq.categoria} {arq.division || ''}</p>
-                        </div>
-                        <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${asistencia[arq.id] ? 'bg-emerald-900/40 text-emerald-400' : 'bg-red-900/20 text-red-400'}`}>
-                          {asistencia[arq.id] ? 'PRESENTE' : 'AUSENTE'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {/* PANEL DE EJERCICIOS Y FILTRO POR OBJETIVO TÁCTICO */}
-              <div className="lg:col-span-2 bg-neutral-950 p-5 rounded-xl border border-neutral-800 h-[500px] flex flex-col justify-between">
-                <div className="space-y-4 flex-1 flex flex-col overflow-hidden">
-                  
-                  {/* Selector de Dos Niveles Encadenado por Objetivo */}
-                  <div className="border-b border-neutral-800 pb-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    
-                    {/* A. Selector del Objetivo Principal */}
-                    <div className="sm:col-span-1">
-                      <select
-                        value={rubroFiltrado}
-                        onChange={(e) => setRubroFiltrado(e.target.value)}
-                        className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-emerald-400 font-medium focus:border-emerald-500/50 focus:outline-none"
-                      >
-                        <option value="">-- Todos los Objetivos --</option>
-                        {Array.from(new Set(ejerciciosCatalogo.map(e => e.objetivos).filter(Boolean))).map((obj: any, idx) => (
-                          <option key={idx} value={obj}>{obj}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* B. Selector de Ejercicios Filtrado Automáticamente */}
-                    <div className="sm:col-span-2">
-                      <select
-                        onChange={(e) => {
-                          const ejercicioId = e.target.value
-                          if (ejercicioId) {
-                            const encontrado = ejerciciosCatalogo.find(ex => ex.id === ejercicioId)
-                            if (encontrado) setEjercicioPrevisualizado(encontrado)
-                          }
-                          e.target.value = ""
-                        }}
-                        className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-neutral-200 focus:border-emerald-500/50 focus:outline-none"
-                      >
-                        <option value="">-- Seleccionar Ejercicio Táctico --</option>
-                        {ejerciciosCatalogo
-                          .filter(ej => !rubroFiltrado || ej.objetivos === rubroFiltrado)
-                          .map((ej) => (
-                            <option key={ej.id} value={ej.id}>
-                              [{ej.codigo}] {ej.nombre}
-                            </option>
-                          ))
-                        }
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Estructura de la Sesión Scrolleable */}
-                  <div className="flex-1 overflow-y-auto pr-1 space-y-3">
-                    <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">📋 Estructura de la Sesión</div>
-                    
-                    {ejerciciosSeleccionados.length === 0 ? (
-                      <div className="text-neutral-600 text-xs py-12 text-center bg-neutral-900 rounded-lg border border-neutral-800/40">
-                        Tu rutina está vacía. Añade ejercicios arriba para ver su desarrollo y videos.
-                      </div>
-                    ) : (
-                      ejerciciosSeleccionados.map((ej) => (
-                        <div key={ej.id} className="bg-neutral-900 border border-neutral-800 p-3.5 rounded-xl flex flex-col gap-2 text-xs">
-                          <div className="space-y-1">
-                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-neutral-800 pb-2 mb-1">
-                              <div className="flex items-center gap-2">
-                                <span className="bg-neutral-800 text-neutral-400 font-mono font-bold px-1.5 py-0.5 rounded text-[10px]">[{ej.codigo}]</span>
-                                <span className="font-bold text-neutral-200 text-sm">{ej.nombre}</span>
-                              </div>
-                              
-                              <div className="flex items-center gap-3 text-[11px]">
-                                <div className="flex items-center gap-1.5">
-                                  <input
-                                    type="number" min={1} max={120} value={ej.duracion}
-                                    onChange={(e) => cambiarDuracionEjercicio(ej.id, parseInt(e.target.value) || 0)}
-                                    className="w-14 text-center rounded border border-neutral-800 bg-neutral-950 py-0.5 text-xs text-emerald-400 font-bold focus:outline-none"
-                                  />
-                                  <span className="text-neutral-400 text-[10px]">min</span>
-                                </div>
-                                <button
-                                  type="button" onClick={() => quitarEjercicioDeRutina(ej.id)}
-                                  className="text-neutral-500 hover:text-red-400 transition-colors font-medium text-[11px]"
-                                >
-                                  Quitar
-                                </button>
-                              </div>
-                            </div>
-                            
-                            <p className="text-[11px] text-neutral-400">Foco Técnico: <span className="text-neutral-300">{ej.objetivos || ej.subrubro}</span></p>
-                            
-                            {ej.desarrollo && (
-                              <div className="text-[11px] text-neutral-300 bg-neutral-950/50 p-2.5 rounded-lg border border-neutral-800/60 my-1.5 leading-relaxed whitespace-pre-wrap">
-                                <span className="text-[10px] font-bold text-emerald-500/80 block uppercase tracking-wider mb-0.5">Desarrollo:</span>
-                                {ej.desarrollo}
-                              </div>
-                            )}
-                            
-                            {ej.multimedia_url ? (
-                              <a 
-                                href={ej.multimedia_url} target="_blank" rel="noreferrer"
-                                className="text-[11px] text-emerald-400 hover:underline inline-flex items-center gap-1 pt-0.5"
-                              >
-                                🔗 Ver Video Demostrativo
-                              </a>
-                            ) : (
-                              <span className="text-[11px] text-neutral-600 block">Sin video</span>
-                            )}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                </div>
-              </div>
-
-            </div>
-
-          </form>
-        )}
-      </div>
-
-      {/* VENTANA EMERGENTE: MODAL DE PREVISUALIZACIÓN TÉCNICA */}
-      {ejercicioPrevisualizado && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-xl bg-neutral-900 border border-neutral-800 rounded-xl p-6 shadow-2xl space-y-4">
-            
-            <div className="border-b border-neutral-800 pb-3 flex justify-between items-start">
-              <div>
-                <span className="bg-neutral-800 text-neutral-400 font-mono font-bold px-1.5 py-0.5 rounded text-[10px]">[{ejercicioPrevisualizado.codigo}]</span>
-                <h2 className="text-lg font-bold text-emerald-400 mt-1">{ejercicioPrevisualizado.nombre}</h2>
-                <div className="flex flex-wrap items-center gap-3 text-neutral-400 text-xs mt-1">
-                  <span>Clasificación: <span className="text-neutral-200">{ejercicioPrevisualizado.rubro}</span></span>
-                  <span className="text-neutral-600">•</span>
-                  <span className="bg-emerald-950/40 text-emerald-400 border border-emerald-800/30 px-2 py-0.5 rounded font-medium text-[11px]">
-                    👥 {arquerosFiltrados.length} {arquerosFiltrados.length === 1 ? 'Arquero asignado' : 'Arqueros asignados'}
-                  </span>
-                </div>
-              </div>
-              <button 
-                type="button" 
-                onClick={() => setEjercicioPrevisualizado(null)}
-                className="text-neutral-500 hover:text-neutral-200 font-bold text-sm px-2"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs overflow-y-auto max-h-[300px] pr-1">
-              <div>
-                <span className="text-[10px] font-bold text-emerald-500 block uppercase tracking-wider mb-1">Desarrollo Técnico / Explicación:</span>
-                <p className="text-neutral-300 leading-relaxed bg-neutral-950 p-3 rounded-lg border border-neutral-800 whitespace-pre-wrap">
-                  {ejercicioPrevisualizado.desarrollo || "No registra descripción técnica en la base de datos."}
-                </p>
-              </div>
-
-              <div>
-                <span className="text-[10px] font-bold text-emerald-500 block uppercase tracking-wider mb-1">Enlace Multimedia Oficial:</span>
-                {ejercicioPrevisualizado.multimedia_url ? (
-                  <a 
-                    href={ejercicioPrevisualizado.multimedia_url} target="_blank" rel="noreferrer"
-                    className="text-emerald-400 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-emerald-500/40 px-3 py-2.5 rounded-lg w-full transition-all flex items-center justify-between font-medium group"
-                  >
-                    <span className="flex items-center gap-2">🎬 Ver Video Demostrativo del Ejercicio</span>
-                    <span className="text-neutral-500 group-hover:text-emerald-400 transition-colors text-[10px]">Abrir en pestaña nueva →</span>
-                  </a>
-                ) : (
-                  <div className="text-neutral-600 bg-neutral-950/40 border border-neutral-900/60 p-3 rounded-lg italic">
-                    Este ejercicio no registra un enlace de video cargado en el catálogo.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="border-t border-neutral-800 pt-3 flex gap-3">
-              <button
-                type="button"
-                onClick={() => setEjercicioPrevisualizado(null)}
-                className="w-1/3 text-center py-2 bg-neutral-950 border border-neutral-800 hover:border-neutral-700 text-neutral-400 rounded-lg text-xs font-semibold transition-all"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const yaExiste = ejerciciosSeleccionados.some(e => e.id === ejercicioPrevisualizado.id)
-                  if (!yaExiste) {
-                    setEjerciciosSeleccionados([...ejerciciosSeleccionados, { ...ejercicioPrevisualizado, duracion: 15 }])
-                  }
-                  setEjercicioPrevisualizado(null)
-                }}
-                className="w-2/3 text-center py-2 bg-emerald-950/40 border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-lg text-xs font-bold transition-all tracking-wider uppercase"
-              >
-                Añadir a la Sesión
-              </button>
-            </div>
-
+          <div>
+            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Club Permitido</label>
+            <select 
+              value={clubSeleccionado} onChange={(e) => setClubSeleccionado(e.target.value)} required
+              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50 cursor-pointer"
+            >
+              <option value="">-- Elegir Club --</option>
+              {clubesDisponibles.map((c, idx) => <option key={idx} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Categoría Asignada</label>
+            <select 
+              value={equipoSeleccionado} onChange={(e) => setEquipoSeleccionado(e.target.value)} required disabled={!clubSeleccionado}
+              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50 disabled:opacity-30 cursor-pointer"
+            >
+              <option value="">-- Elegir Categoría --</option>
+              {equiposDisponibles.map((cat, idx) => <option key={idx} value={cat}>{cat}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">N° Entrenamiento (Auto)</label>
+            <input 
+              type="number" value={numeroEntrenamiento} onChange={(e) => setNumeroEntrenamiento(e.target.value)} required
+              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-emerald-400 font-bold focus:outline-none focus:border-emerald-500/50"
+            />
           </div>
         </div>
-      )}
 
+        {/* CUERPO CENTRAL DE REPARTO: TRES PANELES VERTICALES */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+          
+          {/* PANEL 1: CATÁLOGO MAESTRO DE EJERCICIOS */}
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 h-[550px] flex flex-col overflow-hidden shadow-xl">
+            <div className="space-y-2 mb-3 shrink-0">
+              <div className="text-xs font-bold text-neutral-400 uppercase tracking-wider">📚 Catálogo de Ejercicios Técnicos</div>
+              
+              <select
+                value={filtroObjetivo} onChange={(e) => setFiltroObjetivo(e.target.value)}
+                className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-1.5 text-emerald-400 font-bold focus:outline-none focus:border-emerald-500/50 cursor-pointer"
+              >
+                <option value="">🎯 Ver Todos los Objetivos Técnicos</option>
+                {objetivosUnicos.map((obj, idx) => <option key={idx} value={obj}>{obj}</option>)}
+              </select>
+            </div>
+
+            {cargandoBase ? (
+              <div className="text-xs text-neutral-500 text-center py-12 flex-1">Sincronizando biblioteca de videos...</div>
+            ) : ejerciciosFiltradosCatalogo.length === 0 ? (
+              <div className="text-xs text-neutral-600 italic text-center py-12 flex-1">No hay ejercicios para este filtro.</div>
+            ) : (
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                {ejerciciosFiltradosCatalogo.map((ej) => (
+                  <div key={ej.id} className="bg-neutral-950 border border-neutral-800/60 p-3 rounded-xl flex flex-col justify-between items-start gap-2.5 hover:border-neutral-700 transition-all">
+                    <div className="w-full space-y-2">
+                      {/* Renglón Superior con título compacto */}
+                      <div className="flex items-center gap-2 border-b border-neutral-900 pb-1.5 w-full">
+                        <span className="bg-neutral-900 border border-neutral-800 text-neutral-500 font-mono text-[8px] font-bold px-1 py-0.2 rounded">[{ej.codigo || 'KEE'}]</span>
+                        {/* Achicamos la tipografía del nombre aquí también */}
+                        <h3 className="font-bold text-[11px] text-neutral-300 truncate flex-1" title={ej.nombre}>{ej.nombre}</h3>
+                        
+                        {ej.multimedia_url && (
+                          <a 
+                            href={ej.multimedia_url} target="_blank" rel="noopener noreferrer"
+                            className="text-[9px] text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 px-1.5 py-0.5 rounded hover:bg-emerald-500 hover:text-white transition-all font-bold font-mono uppercase tracking-wider"
+                          >
+                            ▶ Video
+                          </a>
+                        )}
+                      </div>
+                      
+                      <p className="text-[9px] text-neutral-500">Objetivo: <span className="text-emerald-400/90 font-semibold">{ej.objetivos || ej.subrubro || 'General'}</span></p>
+                      
+                      {/* Caja de Desarrollo Técnico Ampliada */}
+                      {ej.desarrollo && (
+                        <div className="text-xs text-neutral-300 bg-neutral-900 p-2.5 rounded-lg border border-neutral-800/40 text-left font-medium leading-relaxed select-text">
+                          <div className="text-[9px] uppercase tracking-wider text-neutral-500 font-bold mb-1">Análisis Técnico:</div>
+                          <span className="italic">{ej.desarrollo}</span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <button
+                      type="button" onClick={() => agregarEjercicioRutina(ej)}
+                      className="w-full text-center py-1 bg-neutral-900 border border-neutral-800 hover:border-emerald-500/40 hover:text-emerald-400 text-neutral-400 text-[11px] font-bold rounded-lg transition-all cursor-pointer mt-0.5"
+                    >
+                      + Añadir al Visor
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+
+
+          {/* PANEL 2: VISOR INTERACTIVO DE LA RUTINA DEL DÍA */}
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 h-[550px] flex flex-col overflow-hidden shadow-xl">
+            <div className="text-xs font-bold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-3 shrink-0">
+              📋 Rutina y Bloques del Entrenamiento ({ejerciciosSeleccionados.length})
+            </div>
+
+            {ejerciciosSeleccionados.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center text-neutral-500 text-xs italic gap-1.5 p-6">
+                <span>📋</span>
+                El visor de rutina se encuentra vacío. Añade bloques tácticos desde el catálogo de la izquierda.
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                {ejerciciosSeleccionados.map((ej, index) => (
+                  <div key={ej.id} className="bg-neutral-950 border border-neutral-800/80 p-3 rounded-xl flex items-center justify-between gap-3 text-xs">
+                    <div className="space-y-0.5 truncate flex-1">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="text-[10px] text-neutral-500 font-mono">#{index + 1}</span>
+                        <span className="font-bold text-neutral-200 truncate">{ej.nombre}</span>
+                      </div>
+                      <p className="text-[9px] text-neutral-500 truncate">Foco: <span className="text-neutral-400 font-medium">{ej.objetivos || ej.subrubro}</span></p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number" min={1} max={120} 
+                          value={ej.duracion}
+                          onChange={(e) => cambiarDuracionEjercicio(ej.id, e.target.value)}
+                          className="w-10 text-center rounded border border-neutral-800 bg-neutral-900 py-0.5 text-xs font-bold text-emerald-400"
+                        />
+                        <span className="text-neutral-500 text-[10px]">min</span>
+                      </div>
+                      <button
+                        type="button" onClick={() => quitarEjercicioRutina(ej.id)}
+                        className="text-red-400/80 hover:text-red-400 text-xs font-bold px-1 cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* PANEL 3: ASISTENCIA OFICIAL DEL PLANTEL */}
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 h-[550px] flex flex-col overflow-hidden shadow-xl">
+            <div className="text-xs font-bold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-3 shrink-0">
+              👥 Asistencia diaria de los Arqueros ({arquerosFiltrados.length})
+            </div>
+
+            {!clubSeleccionado || !equipoSeleccionado ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center text-neutral-500 text-xs italic gap-1.5 p-6">
+                <span>👥</span>
+                Selecciona un Club y Categoría arriba para descargar el listado oficial de arqueros.
+              </div>
+            ) : arquerosFiltrados.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-neutral-600 text-xs italic text-center p-6">
+                No se registran alumnos dados de alta en este plantel.
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col justify-between overflow-hidden">
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                  {arquerosFiltrados.map((arq) => (
+                    <div 
+                      key={arq.id} 
+                      onClick={() => toggleAsistencia(arq.id)}
+                      className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs cursor-pointer transition-all ${
+                        asistencia[arq.id] 
+                          ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400 shadow-sm' 
+                          : 'bg-red-950/20 border-red-900/40 text-red-400 opacity-60'
+                      }`}
+                    >
+                      <span className="font-bold truncate max-w-[170px]">{arq.nombre_completo}</span>
+                      <span className={`font-mono text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border shrink-0 ${
+                        asistencia[arq.id]
+                          ? 'bg-emerald-950 text-emerald-400 border-emerald-800/40'
+                          : 'bg-red-950 text-red-400 border-red-900/40'
+                      }`}>
+                        {asistencia[arq.id] ? 'Presente' : 'Ausente'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Campos de texto complementarios antes de guardar */}
+                <div className="border-t border-neutral-800/60 pt-3 mt-3 space-y-3 bg-neutral-900 shrink-0">
+                  <div>
+                    <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold">Foco General (Objetivo de la Sesión)</label>
+                    <input
+                      type="text" name="objetivo" required
+                      value={objetivoSesion} onChange={(e) => setObjetivoSesion(e.target.value)}
+                      placeholder="Ej: Blocaje bajo y transiciones rápidas"
+                      className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold">Observaciones Globales del Día</label>
+                    <textarea
+                      rows={2} value={observacionesGlobales} onChange={(e) => setObservacionesGlobales(e.target.value)}
+                      placeholder="Comentarios sobre el rendimiento del plantel..."
+                      className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50 resize-none"
+                    />
+                  </div>
+                  <button
+                    type="submit" disabled={guardando}
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-800 text-white disabled:text-neutral-500 font-bold rounded-xl text-xs transition-colors shadow-lg uppercase tracking-wider cursor-pointer"
+                  >
+                    {guardando ? 'Sincronizando con Supabase...' : '💾 Guardar Planificación Oficial'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </form>
     </div>
   )
 }

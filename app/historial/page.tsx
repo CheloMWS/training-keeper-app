@@ -32,6 +32,12 @@ export default function HistorialPlanificacionesPage() {
   const [guardando, setGuardando] = useState(false)
   const [mensajeExito, setMensajeExito] = useState('')
 
+  // --- NUEVOS ESTADOS COMPLEMENTARIOS PARA EL MODO EDICIÓN ---
+  const [isEditing, setIsEditing] = useState(false) 
+  const [editObjetivoSesion, setEditObjetivoSesion] = useState('')
+  const [editObservaciones, setEditObservaciones] = useState('')
+  const [editNumeroEntrenamiento, setEditNumeroEntrenamiento] = useState('')
+
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -58,7 +64,7 @@ export default function HistorialPlanificacionesPage() {
 
       const { data: dataEjercicios } = await supabase
         .from('ejercicios')
-        .select('id, codigo, nombre, rubro, multimedia_url, desarrollo')
+        .select('id, codigo, nombre, rubro, multimedia_url, desarrollo, objetivos, subrubro')
         .order('nombre', { ascending: true })
 
       if (dataEjercicios) setEjerciciosCatalogo(dataEjercicios)
@@ -86,348 +92,463 @@ export default function HistorialPlanificacionesPage() {
     inicializarHistorial()
   }, [supabase])
 
-  // 2. FILTRADO EN CASCADA COMPACTO (Fecha, Club y Categoría)
+  // 2. CARGAR SUB-DATOS EN CALIENTE CON DESCARGA MULTIMEDIA DE RELACIÓN CRUZADA
   useEffect(() => {
-    let resultado = [...todosLosEntrenamientos]
-
-    if (filtroFecha) {
-      resultado = resultado.filter(e => e.fecha === filtroFecha)
-    }
-    if (filtroClub) {
-      resultado = resultado.filter(e => e.club === filtroClub)
-    }
-    if (filtroCategoria) {
-      resultado = resultado.filter(e => e.categoria === filtroCategoria)
+    if (!seleccionado) {
+      setRutinaDetalle([])
+      setAsistenciaDetalle([])
+      setIsEditing(false)
+      return
     }
 
-    setEntrenamientosFiltrados(resultado)
-    
-    // Si la sesión elegida sale del rango de los filtros, cerramos el visor
-    if (seleccionado && !resultado.some(e => e.id === seleccionado.id)) {
-      setSeleccionado(null)
-    }
-  }, [filtroFecha, filtroClub, filtroCategoria, todosLosEntrenamientos, seleccionado])
-
-  // 3. DESCARGAR DETALLES INTERACTIVOS AL SELECCIONAR UNA SESIÓN
-  const seleccionarEntrenamiento = async (entreno: any) => {
-    setSeleccionado(entreno)
-    setCargandoDetalle(true)
-    setMensajeExito('')
-    setRutinaDetalle([])
-    setAsistenciaDetalle([])
-
-    try {
-      // Traemos ejercicios asociados cruzando datos maestros
-      const { data: rutina, error: err1 } = await supabase
+    async function descargarDetalles() {
+      setCargandoDetalle(true)
+      setMensajeExito('')
+      
+      // Descargamos de forma explícita el video y el desarrollo embebidos en el lazo relacional de ejercicios
+      const { data: ejers } = await supabase
         .from('entrenamiento_ejercicios')
-        .select('id, entrenamiento_id, ejercicio_id, duracion_minutos, ejercicios (codigo, nombre, desarrollo, multimedia_url)')
-        .eq('entrenamiento_id', entreno.id)
+        .select('ejercicio_id, duracion_minutos, ejercicios(codigo, nombre, objetivos, subrubro, multimedia_url, desarrollo)')
+        .eq('entrenamiento_id', seleccionado.id)
+        .order('orden', { ascending: true })
 
-      // Traemos la asistencia de los arqueros cruzando sus nombres completos
-      const { data: asistencia, error: err2 } = await supabase
+      if (ejers) setRutinaDetalle(ejers)
+
+      const { data: asists } = await supabase
         .from('asistencias')
-        .select('id, entrenamiento_id, alumno_id, presente, alumnos (nombre_completo)')
-        .eq('entrenamiento_id', entreno.id)
+        .select('alumno_id, presente, alumnos(nombre_completo)')
+        .eq('entrenamiento_id', seleccionado.id)
 
-      if (!err1 && rutina) setRutinaDetalle(rutina)
-      if (!err2 && asistencia) setAsistenciaDetalle(asistencia)
-    } catch (err: unknown) {
-      console.error('Error al cargar detalle interactivo:', err)
-    } finally {
+      if (asists) setAsistenciaDetalle(asists)
+
+      setEditObjetivoSesion(seleccionado.objetivo_sesion || '')
+      setEditObservaciones(seleccionado.observaciones || '')
+      setEditNumeroEntrenamiento(seleccionado.numero_entrenamiento || '1')
+      setIsEditing(false)
+      
       setCargandoDetalle(false)
     }
-  }
 
-  // --- CONTROLES DE EDICIÓN EN CALIENTE ---
-  const cambiarMinutosEjercicio = (id: string, minutos: number) => {
-    setRutinaDetalle(prev => prev.map(item => item.id === id ? { ...item, duracion_minutos: minutos } : item))
-  }
+    descargarDetalles()
+  }, [seleccionado, supabase])
 
-  const quitarEjercicioDeSesion = (id: string) => {
-    setRutinaDetalle(prev => prev.filter(item => item.id !== id))
-  }
+  // 3. EFECTO REACTIVO: FILTRADO DE LA LISTA IZQUIERDA
+  useEffect(() => {
+    let filtrados = [...todosLosEntrenamientos]
 
-  const toggleAsistenciaArquero = (id: string) => {
-    setAsistenciaDetalle(prev => prev.map(item => item.id === id ? { ...item, presente: !item.presente } : item))
-  }
+    if (filtroFecha) filtrados = filtrados.filter(e => e.fecha === filtroFecha)
+    if (filtroClub) filtrados = filtrados.filter(e => e.club === filtroClub)
+    if (filtroCategoria) filtrados = filtrados.filter(e => e.categoria === filtroCategoria)
 
-  // 4. GUARDAR CAMBIOS MODIFICADOS EN LA BASE DE DATOS
-  const handleGuardarCambios = async (e: React.FormEvent) => {
-    e.preventDefault()
+    setEntrenamientosFiltrados(filtrados)
+  }, [filtroFecha, filtroClub, filtroCategoria, todosLosEntrenamientos])
+
+  // 4. FUNCIÓN DE GUARDADO SINCRO PARA EDICIÓN COMPLETA
+  const handleGuardarCambios = async () => {
     if (!seleccionado) return
     setGuardando(true)
     setMensajeExito('')
 
     try {
-      // A. Actualizar Cronograma de Ejercicios (Limpieza e inserción fresca)
-      const { error: errDelEjercicios } = await supabase
+      const { error: errorEntrenamiento } = await supabase
+        .from('entrenamientos')
+        .update({
+          objetivo_sesion: editObjetivoSesion.trim(),
+          observaciones: editObservaciones.trim()
+        })
+        .eq('id', seleccionado.id)
+
+      if (errorEntrenamiento) throw errorEntrenamiento
+
+      const { error: errorBorrarEjercicios } = await supabase
         .from('entrenamiento_ejercicios')
         .delete()
         .eq('entrenamiento_id', seleccionado.id)
 
-      if (errDelEjercicios) throw errDelEjercicios
+      if (errorBorrarEjercicios) throw errorBorrarEjercicios
 
       if (rutinaDetalle.length > 0) {
         const filasEjercicios = rutinaDetalle.map((item, idx) => ({
           entrenamiento_id: seleccionado.id,
-          ejercicio_id: item.ejercicio_id,
-          duracion_minutos: item.duracion_minutos,
-          orden: idx + 1 // ← Inyecta 1, 2, 3... cumpliendo el NOT NULL de la tabla en Supabase
+          ejercicio_id: item.ejercicio_id || item.id,
+          duracion_minutos: parseInt(item.duracion_minutos) || 15,
+          orden: idx + 1 
         }))
 
-        const { error: errInsEjercicios } = await supabase
+        const { error: errorInsertarEjercicios } = await supabase
           .from('entrenamiento_ejercicios')
           .insert(filasEjercicios)
 
-        if (errInsEjercicios) throw errInsEjercicios
+        if (errorInsertarEjercicios) throw errorInsertarEjercicios
       }
 
-      // B. Actualizar Asistencias una por una mediante su ID de fila
-      for (const item of asistenciaDetalle) {
-        const { error: errAsis } = await supabase
+      const { error: errorBorrarAsistencia } = await supabase
+        .from('asistencias')
+        .delete()
+        .eq('entrenamiento_id', seleccionado.id)
+
+      if (errorBorrarAsistencia) throw errorBorrarAsistencia
+
+      if (asistenciaDetalle.length > 0) {
+        const filasAsistencia = asistenciaDetalle.map(item => ({
+          entrenamiento_id: seleccionado.id,
+          alumno_id: item.alumno_id || item.id,
+          presente: item.presente ?? false
+        }))
+
+        const { error: errorInsertarAsistencia } = await supabase
           .from('asistencias')
-          .update({ presente: item.presente })
-          .eq('id', item.id)
+          .insert(filasAsistencia)
 
-        if (errAsis) throw errAsis
+        if (errorInsertarAsistencia) throw errorInsertarAsistencia
       }
 
-      setMensajeExito('¡Sesión de entrenamiento modificada y guardada con éxito en Supabase! 🚀')
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Error desconocido';
-      const sbErr = err && typeof err === 'object' ? err as Record<string, any> : {};
+      const mapearCambio = (e: any) => e.id === seleccionado.id ? { 
+        ...e, 
+        objetivo_sesion: editObjetivoSesion.trim(), 
+        observaciones: editObservaciones.trim()
+      } : e
 
-      console.error('Error descriptivo al modificar entrenamiento:', {
-        mensaje: msg,
-        objetoCompleto: err,
-        supabaseError: sbErr.message || sbErr.hint || sbErr.details
-      })
-      alert(`No se pudo modificar: ${sbErr.message || 'Verifique restricciones de columnas'}`)
+      setTodosLosEntrenamientos(prev => prev.map(mapearCambio))
+      setEntrenamientosFiltrados(prev => prev.map(mapearCambio))
+
+      setMensajeExito('¡Planificación modificada y guardada con éxito en Supabase! 🚀🔥')
+      setIsEditing(false)
+
+    } catch (err: any) {
+      console.error('Error al modificar entrenamiento:', err)
+      alert(`No se pudieron guardar los cambios: ${err?.message || 'Error de consistencia'}`)
     } finally {
       setGuardando(false)
     }
   }
+
+  // Corrección en las funciones de manipulación para operar sobre estructuras relacionales anidadas
+  const cambiarMinutosEjercicioEdicion = (ejercicioId: string, nuevosMinutos: number) => {
+    setRutinaDetalle(prev => prev.map(item => (item.ejercicio_id === ejercicioId) ? { ...item, duracion_minutos: nuevosMinutos } : item))
+  }
+
+  const quitarEjercicioEdicion = (ejercicioId: string) => {
+    setRutinaDetalle(prev => prev.filter(item => item.ejercicio_id !== ejercicioId))
+  }
+
+  const conmutarAsistenciaEdicion = (alumnoId: string) => {
+    setAsistenciaDetalle(prev => prev.map(item => (item.alumno_id === alumnoId) ? { ...item, presente: !item.presente } : item))
+  }
+
   return (
-    <div className="min-h-screen bg-neutral-950 text-white p-6 md:p-12 font-sans">
-      <div className="max-w-7xl mx-auto bg-neutral-900 border border-neutral-800 rounded-xl p-8 shadow-2xl space-y-6">
+    <div className="min-h-screen bg-neutral-950 text-white p-4 md:p-8 font-sans">
+      <div className="max-w-7xl mx-auto space-y-6">
         
         {/* Encabezado */}
-        <div className="border-b border-neutral-800 pb-6 flex justify-between items-center">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-xl">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-emerald-400">TRAINING KEEPER APP</h1>
-            <p className="text-neutral-400 text-sm mt-1">Administrador de Historial — Ver, Editar y Modificar Planificaciones</p>
+            <h1 className="text-xl font-bold tracking-tight text-emerald-400">TRAINING KEEPER APP</h1>
+            <p className="text-neutral-400 text-xs mt-0.5">Historial de Sesiones — Consulta, Auditoría y Modificación en Caliente</p>
           </div>
           <button 
             type="button"
             onClick={() => router.push('/')} 
-            className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors bg-neutral-950"
+            className="text-xs text-neutral-400 hover:text-emerald-400 border border-neutral-800 px-3 py-1.5 rounded-lg transition-colors bg-neutral-950 cursor-pointer"
           >
             ← Volver al Menú
           </button>
         </div>
 
-        {mensajeExito && (
-          <div className="bg-emerald-950/40 border border-emerald-500/50 p-4 rounded-xl text-emerald-400 text-xs text-center font-semibold">
-            {mensajeExito}
-          </div>
-        )}
-
-        {/* BARRA DE FILTROS SUPERIOR EN UNA SOLA LÍNEA HORIZONTAL */}
-        <div className="bg-neutral-950 p-4 rounded-xl border border-neutral-800 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        {/* BARRA COMPACTA DE FILTROS HORIZONTALES */}
+        <div className="bg-neutral-900 p-4 rounded-xl border border-neutral-800 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end shadow-md">
           <div>
-            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Fecha</label>
+            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold">Filtrar por Fecha</label>
             <input 
               type="date" value={filtroFecha} onChange={(e) => setFiltroFecha(e.target.value)}
-              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-neutral-100 focus:border-emerald-500/50 focus:outline-none"
+              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50"
             />
           </div>
-
           <div>
-            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Club</label>
+            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold">Filtrar por Club</label>
             <select 
               value={filtroClub} onChange={(e) => setFiltroClub(e.target.value)}
-              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-neutral-100 focus:border-emerald-500/50 focus:outline-none"
+              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50"
             >
               <option value="">-- Todos los Clubes --</option>
-              {clubesDB.map((club, idx) => (
-                <option key={idx} value={club}>{club}</option>
-              ))}
+              {clubesDB.map((c, idx) => <option key={idx} value={c}>{c}</option>)}
             </select>
           </div>
-
           <div>
-            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold tracking-wider">Categoría</label>
+            <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold">Filtrar Categoría</label>
             <select 
               value={filtroCategoria} onChange={(e) => setFiltroCategoria(e.target.value)}
-              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-neutral-100 focus:border-emerald-500/50 focus:outline-none"
+              className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50"
             >
               <option value="">-- Todas las Categorías --</option>
-              {categoriasDB.map((cat, idx) => (
-                <option key={idx} value={cat}>{cat}</option>
-              ))}
+              {categoriasDB.map((c, idx) => <option key={idx} value={c}>{c}</option>)}
             </select>
           </div>
-
           <button
             type="button"
-            disabled={!filtroFecha && !filtroClub && !filtroCategoria}
             onClick={() => { setFiltroFecha(''); setFiltroClub(''); setFiltroCategoria('') }}
-            className="w-full text-center py-2 bg-neutral-950 border border-neutral-800 hover:border-neutral-700 text-neutral-400 rounded-lg text-xs font-bold transition-all disabled:opacity-30 tracking-wider uppercase"
+            className="w-full py-2 bg-neutral-950 border border-neutral-800 hover:border-neutral-700 text-neutral-400 rounded-lg text-xs font-bold transition-all uppercase tracking-wider cursor-pointer"
           >
             Limpiar Filtros
           </button>
         </div>
 
-        {/* DOBLE PANEL INTERACTIVO DE ADMINISTRACIÓN */}
+        {/* CONTENEDOR PRINCIPAL: DOS COLUMNAS */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* COLUMNA IZQUIERDA: LISTADO DE PLANIFICACIONES ENCONTRADAS */}
-          <div className="lg:col-span-1 bg-neutral-950 p-4 rounded-xl border border-neutral-800 h-[520px] overflow-y-auto space-y-2">
-            <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-2">
-              Sesiones Registradas ({entrenamientosFiltrados.length})
+          {/* COLUMNA IZQUIERDA: PANEL DE CRONOGRAMA HISTÓRICO */}
+          <div className="lg:col-span-1 bg-neutral-900 border border-neutral-800 rounded-xl p-4 h-[600px] flex flex-col overflow-hidden shadow-xl">
+            <div className="text-xs font-bold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-3">
+              📅 Entrenamientos Registrados ({entrenamientosFiltrados.length})
             </div>
-            
+
             {cargandoLista ? (
-              <div className="text-neutral-500 text-xs text-center py-8">Sincronizando con Supabase...</div>
+              <div className="text-xs text-neutral-500 text-center py-12">Sincronizando con el servidor remoto...</div>
             ) : entrenamientosFiltrados.length === 0 ? (
-              <div className="text-neutral-500 text-xs text-center py-8">No se encontraron entrenamientos con los filtros aplicados.</div>
+              <div className="text-xs text-neutral-600 italic text-center py-12">No se registran planificaciones para este criterio.</div>
             ) : (
-              entrenamientosFiltrados.map((entreno) => (
-                <button
-                  type="button" key={entreno.id} onClick={() => seleccionarEntrenamiento(entreno)}
-                  className={`w-full text-left p-3.5 rounded-lg border text-xs transition-all flex flex-col gap-1 ${
-                    seleccionado?.id === entreno.id 
-                      ? 'bg-emerald-950/20 border-emerald-500/40 text-white shadow-md shadow-emerald-950/10' 
-                      : 'bg-neutral-900 border-neutral-800/80 hover:border-neutral-700 text-neutral-300'
-                  }`}
-                >
-                  <div className="flex justify-between items-center w-full mb-0.5">
-                    <span className="font-bold text-emerald-400 text-[13px]">📅 {entreno.fecha}</span>
-                  </div>
-                  <p className="font-bold text-neutral-100 text-xs">{entreno.club}</p>
-                  <p className="text-neutral-400 text-[11px]">{entreno.categoria}</p>
-                </button>
-              ))
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                {entrenamientosFiltrados.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => { if (!guardando) setSeleccionado(item) }}
+                    className={`w-full text-left p-3.5 rounded-xl border transition-all flex flex-col gap-1 cursor-pointer ${
+                      seleccionado?.id === item.id
+                        ? 'bg-emerald-950/30 border-emerald-500/50 shadow-md'
+                        : 'bg-neutral-950 border-neutral-800/80 hover:border-neutral-700'
+                    }`}
+                  >
+                    <div className="flex justify-between items-center w-full">
+                      <span className="font-mono text-xs font-bold text-emerald-400">{item.fecha}</span>
+                      <span className="text-[10px] font-bold uppercase tracking-wide text-neutral-500 bg-neutral-900 px-2 py-0.5 rounded-md border border-neutral-800">
+                        Práctica N°{item.numero_entrenamiento || 1}
+                      </span>
+                    </div>
+                    <div className="font-bold text-sm text-neutral-200 truncate mt-0.5">{item.club}</div>
+                    <div className="text-xs text-neutral-400 font-medium">Categoría: <span className="text-neutral-300">{item.categoria}</span></div>
+                    <div className="text-[11px] text-neutral-500 italic truncate mt-1 border-t border-neutral-900 pt-1">🎯 Foco: {item.objetivo_sesion || 'General'}</div>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
-          {/* COLUMNA DERECHA: FORMULARIO INTERACTIVO DE EDICIÓN EN CALIENTE */}
-          <div className="lg:col-span-2 bg-neutral-950 p-5 rounded-xl border border-neutral-800 h-[520px] flex flex-col justify-between">
+          {/* COLUMNA DERECHA: MONITOR E INTERFAZ DE EDICIÓN EN CALIENTE */}
+          <div className="lg:col-span-2 bg-neutral-900 border border-neutral-800 rounded-xl p-6 h-[600px] flex flex-col justify-between overflow-hidden shadow-xl">
+            
             {!seleccionado ? (
-              <div className="h-full flex flex-col justify-center items-center text-center text-neutral-500 py-12 my-auto">
-                <span className="text-2xl block mb-2">📋</span>
-                <p className="text-xs max-w-xs leading-relaxed">
-                  Selecciona una sesión del historial a la izquierda para auditar, editar y re-guardar la planificación táctica.
-                </p>
+              <div className="flex-1 flex flex-col items-center justify-center text-neutral-500 text-xs italic gap-2">
+                <span className="text-3xl">📋</span>
+                Selecciona una sesión de entrenamiento del panel izquierdo para auditar la rutina o modificar su planificación.
               </div>
             ) : cargandoDetalle ? (
-              <div className="h-full flex justify-center items-center text-neutral-500 text-xs my-auto">
-                Descargando estructura táctica y plantel...
+              <div className="flex-1 flex items-center justify-center text-xs text-neutral-500">
+                Cargando datos relacionales desde Supabase en tiempo real...
               </div>
             ) : (
-              <form onSubmit={handleGuardarCambios} className="h-full flex flex-col justify-between overflow-hidden">
-                <div className="space-y-4 flex-1 flex flex-col overflow-hidden">
-                  
-                  {/* Cabecera Interna del Detalle */}
-                  <div className="border-b border-neutral-800 pb-2.5">
-                    <h2 className="text-base font-bold text-emerald-400 uppercase tracking-wide">
-                      {seleccionado.club} — <span className="text-neutral-300">{seleccionado.categoria}</span>
-                    </h2>
-                    <p className="text-[11px] text-neutral-500 mt-0.5">Fecha Oficial de la Sesión: <span className="text-neutral-300 font-medium">{seleccionado.fecha}</span></p>
+              <div className="flex-1 flex flex-col justify-between overflow-hidden space-y-4">
+                
+                {/* Cabecera Interna de la Ficha */}
+                <div className="border-b border-neutral-800 pb-3 flex justify-between items-start shrink-0">
+                  <div className="space-y-1 max-w-[70%]">
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-base font-bold text-neutral-200">{seleccionado.club}</h2>
+                      <span className="bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                        {seleccionado.categoria}
+                      </span>
+                    </div>
+                    <p className="text-xs text-neutral-400 font-medium font-mono">Fecha de Ejecución: {seleccionado.fecha}</p>
                   </div>
 
-                  {/* Contenedor scrolleable interno para evitar desborde */}
-                  <div className="flex-1 overflow-y-auto pr-1 space-y-4">
-                    
-                    {/* SUB-BLOQUE A: CRONOGRAMA DE EJERCICIOS EDITABLES */}
-                    <div className="space-y-2">
-                      <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">⏱️ Modificar Duración y Rutina</div>
-                      {rutinaDetalle.length === 0 ? (
-                        <div className="text-neutral-600 text-xs italic bg-neutral-900/40 p-3 rounded-lg border border-neutral-800/40">No se registraron ejercicios asociados.</div>
-                      ) : (
-                        rutinaDetalle.map((item, idx) => (
-                          <div key={item.id || idx} className="bg-neutral-900 border border-neutral-800 p-3 rounded-xl flex flex-col gap-2 text-xs">
-                            <div className="flex justify-between items-center w-full">
-                              <span className="text-neutral-200 font-bold text-[13px]">
-                                <span className="text-neutral-500 font-mono text-[11px] mr-1">[{item.ejercicios?.codigo}]</span>
-                                {item.ejercicios?.nombre}
-                              </span>
-                              
-                              <div className="flex items-center gap-3 text-[11px]">
-                                <div className="flex items-center gap-1.5">
-                                  <input
-                                    type="number" min={1} max={120} value={item.duracion_minutos}
-                                    onChange={(e) => cambiarMinutosEjercicio(item.id, parseInt(e.target.value) || 0)}
-                                    className="w-14 text-center rounded border border-neutral-800 bg-neutral-950 py-0.5 text-xs text-emerald-400 font-bold focus:outline-none"
-                                  />
-                                  <span className="text-neutral-500 text-[10px]">min</span>
-                                </div>
-                                <button
-                                  type="button" onClick={() => quitarEjercicioDeSesion(item.id)}
-                                  className="text-neutral-500 hover:text-red-400 transition-colors font-medium text-[11px]"
-                                >
-                                  Quitar
-                                </button>
-                              </div>
-                            </div>
-                            
-                            {item.ejercicios?.desarrollo && (
-                              <p className="text-[11px] text-neutral-400 bg-neutral-950/40 p-2 rounded border border-neutral-800/60 leading-relaxed max-h-16 overflow-y-auto whitespace-pre-wrap">
-                                {item.ejercicios.desarrollo}
-                              </p>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
+                  {/* Acciones de Edición */}
+                  <div className="flex gap-2">
+                    {isEditing ? (
+                      <>
+                        <button
+                          type="button" onClick={() => setIsEditing(false)}
+                          className="px-3 py-1.5 bg-neutral-950 border border-neutral-800 hover:border-neutral-700 text-neutral-400 text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button" onClick={handleGuardarCambios} disabled={guardando}
+                          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-colors shadow-md disabled:bg-neutral-800 disabled:text-neutral-500 cursor-pointer"
+                        >
+                          {guardando ? 'Sincronizando...' : 'Guardar Cambios'}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button" onClick={() => setIsEditing(true)}
+                        className="px-4 py-1.5 bg-neutral-950 border border-neutral-800 text-emerald-400 hover:border-emerald-500/40 text-xs font-bold rounded-lg transition-all shadow-sm cursor-pointer"
+                      >
+                        ✏️ Editar Planificación
+                      </button>
+                    )}
+                  </div>
+                </div>
 
-                    {/* SUB-BLOQUE B: CONTROL DE ASISTENCIA EDITABLE */}
-                    <div className="space-y-2">
-                      <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">✅ Modificar Asistencia del Plantel</div>
+                {/* Alertas de Almacenamiento */}
+                {mensajeExito && (
+                  <div className="p-3 bg-emerald-950/40 text-emerald-400 border border-emerald-800/60 rounded-lg text-xs font-bold shrink-0">
+                    {mensajeExito}
+                  </div>
+                )}
+
+                {/* CUERPO CENTRAL SCROLLEABLE INTERACTIVO */}
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+                  
+                  {/* Bloque 1: Campos del Encabezado */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-neutral-950 p-4 rounded-xl border border-neutral-800/50">
+                    <div className="sm:col-span-1">
+                      <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold">Número Práctica</label>
+                      <input 
+                        type="number" value={editNumeroEntrenamiento} 
+                        onChange={(e) => setEditNumeroEntrenamiento(e.target.value)}
+                        disabled={!isEditing}
+                        className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 disabled:bg-transparent"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold">Objetivo / Foco General de la Sesión</label>
+                      <input 
+                        type="text" value={editObjetivoSesion} 
+                        onChange={(e) => setEditObjetivoSesion(e.target.value)}
+                        disabled={!isEditing}
+                        className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 disabled:bg-transparent"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold">Observaciones Globales post-entrenamiento</label>
+                      <textarea 
+                        value={editObservaciones} 
+                        onChange={(e) => setEditObservaciones(e.target.value)}
+                        disabled={!isEditing} rows={2}
+                        className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50 resize-none disabled:opacity-50 disabled:bg-transparent"
+                      />
+                    </div>
+                  </div>
+                    {/* Bloque 2: Cronograma de Ejercicios */}
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">📋 Cronograma de Ejercicios y Tiempos</div>
+                    
+                    {rutinaDetalle.length === 0 ? (
+                      <div className="text-neutral-600 bg-neutral-950/40 text-xs italic py-4 text-center rounded-lg border border-neutral-800/40">Sin ejercicios cargados en la rutina.</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {rutinaDetalle.map((item, index) => {
+                          const ejId = item.ejercicio_id || item.id
+                          const nombreEj = item.ejercicios?.nombre || item.nombre || 'Ejercicio táctico'
+                          const objEj = item.ejercicios?.objetivos || item.ejercicios?.subrubro || item.objetivos || 'Foco Técnico'
+                          const codEj = item.ejercicios?.codigo || item.codigo || 'KEE'
+                          
+                          const urlVideo = item.ejercicios?.multimedia_url || item.multimedia_url || null
+                          const textoDesarrollo = item.ejercicios?.desarrollo || item.desarrollo || null
+
+                          return (
+                            <div key={index} className="bg-neutral-950 border border-neutral-800/80 p-3 rounded-xl flex flex-col gap-2.5 shadow-sm">
+                              {/* Renglón Superior: Título ultra compacto y Controles */}
+                              <div className="flex items-center justify-between gap-4 w-full border-b border-neutral-900 pb-1.5">
+                                <div className="space-y-0.5 truncate flex-1">
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    <span className="bg-neutral-900 border border-neutral-800 text-neutral-500 font-mono font-extrabold px-1.5 py-0.2 rounded text-[8px]">[{codEj}]</span>
+                                    {/* Achicamos la tipografía del nombre para liberar espacio */}
+                                    <span className="font-bold text-neutral-300 text-[11px] truncate" title={nombreEj}>{nombreEj}</span>
+                                  </div>
+                                  <p className="text-[9px] text-neutral-500">Objetivo: <span className="text-neutral-400 font-medium">{objEj}</span></p>
+                                </div>
+
+                                <div className="flex items-center gap-2.5 shrink-0">
+                                  {urlVideo && (
+                                    <a 
+                                      href={urlVideo} target="_blank" rel="noopener noreferrer"
+                                      className="text-[9px] text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 px-1.5 py-0.5 rounded hover:bg-emerald-500 hover:text-white transition-all font-bold font-mono uppercase tracking-wider"
+                                    >
+                                      ▶ Video
+                                    </a>
+                                  )}
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="number" min={1} max={120} 
+                                      value={item.duracion_minutos}
+                                      disabled={!isEditing}
+                                      onChange={(e) => cambiarMinutosEjercicioEdicion(ejId, parseInt(e.target.value) || 0)}
+                                      className="w-10 text-center rounded border border-neutral-800 bg-neutral-900 py-0.5 font-bold text-emerald-400 text-xs disabled:opacity-50"
+                                    />
+                                    <span className="text-neutral-500 text-[9px]">min</span>
+                                  </div>
+                                  {isEditing && (
+                                    <button
+                                      type="button" onClick={() => quitarEjercicioEdicion(ejId)}
+                                      className="text-red-400/70 hover:text-red-400 text-[11px] font-bold px-1 cursor-pointer"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Caja de Desarrollo Técnico: Ahora Más Grande, Cómoda y Legible */}
+                              {textoDesarrollo && (
+                                <div className="text-xs text-neutral-300 bg-neutral-900 p-2.5 rounded-lg border border-neutral-800/50 text-left font-medium leading-relaxed">
+                                  <div className="text-[9px] uppercase tracking-wider text-neutral-500 font-bold mb-1">📝 Consigna de Ejecución:</div>
+                                  <span className="italic select-text">{textoDesarrollo}</span>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Bloque 3: Control de Asistencia del Plantel */}
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">👥 Asistencia del Plantel e Invitados</div>
+                    
+                    {asistenciaDetalle.length === 0 ? (
+                      <div className="text-neutral-600 bg-neutral-950/40 text-xs italic py-4 text-center rounded-lg border border-neutral-800/40">Sin control de arqueros registrado ese día.</div>
+                    ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {asistenciaDetalle.length === 0 ? (
-                          <div className="text-neutral-600 text-xs italic sm:col-span-2 bg-neutral-900/40 p-3 rounded-lg border border-neutral-800/40">No hay registros de alumnos.</div>
-                        ) : (
-                          asistenciaDetalle.map((item) => (
-                            <div 
-                              key={item.id} 
-                              onClick={() => toggleAsistenciaArquero(item.id)}
-                              className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs cursor-pointer transition-all ${
-                                item.presente 
-                                  ? 'bg-emerald-950/20 border-emerald-800/30 text-neutral-200' 
-                                  : 'bg-red-950/10 border-red-900/20 text-neutral-500 line-through'
+                        {asistenciaDetalle.map((item, index) => {
+                          const alId = item.alumno_id || item.id
+                          const nombreCom = item.alumnos?.nombre_completo || item.nombre_completo || 'Arquero'
+
+                          return (
+                            <button
+                              key={index}
+                              type="button"
+                              disabled={!isEditing}
+                              onClick={() => conmutarAsistenciaEdicion(alId)}
+                              className={`p-2.5 rounded-xl border text-left text-xs font-medium flex justify-between items-center transition-all ${
+                                !isEditing ? 'bg-neutral-950 border-neutral-800/50 cursor-default' : 'bg-neutral-950/60 border-neutral-800 hover:border-neutral-700 cursor-pointer'
                               }`}
                             >
-                              <span className="font-bold text-neutral-200">{item.alumnos?.nombre_completo}</span>
-                              <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${item.presente ? 'bg-emerald-900/40 text-emerald-400' : 'bg-red-900/20 text-red-400'}`}>
-                                {item.presente ? 'PRESENTE' : 'AUSENTE'}
+                              <span className="text-neutral-200 font-bold truncate max-w-[150px]">{nombreCom}</span>
+                              <span className={`font-mono text-[10px] uppercase font-bold px-2 py-0.5 rounded-md border shrink-0 ${
+                                item.presente
+                                  ? 'bg-emerald-950/50 text-emerald-400 border-emerald-800/60'
+                                  : 'bg-red-950/50 text-red-400 border-red-800/60'
+                              }`}>
+                                {item.presente ? 'Presente' : 'Ausente'}
                               </span>
-                            </div>
-                          ))
-                        )}
+                            </button>
+                          )
+                        })}
                       </div>
-                    </div>
-
+                    )}
                   </div>
-                </div>
 
-                {/* BOTÓN GENERAL DE GUARDADO DE MODIFICACIONES */}
-                <div className="border-t border-neutral-800 pt-3 mt-3">
-                  <button
-                    type="submit"
-                    disabled={guardando}
-                    className="w-full text-center py-2.5 bg-emerald-950/40 border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-lg text-xs font-bold transition-all disabled:opacity-30 tracking-wider uppercase"
-                  >
-                    {guardando ? 'Guardando Cambios en Supabase...' : 'Guardar Cambios Sincronizados'}
-                  </button>
                 </div>
-              </form>
+              </div>
             )}
+            
           </div>
-
         </div>
 
       </div>
     </div>
   )
 }
+
 
