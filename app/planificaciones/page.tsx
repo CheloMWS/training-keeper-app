@@ -40,9 +40,8 @@ export default function PlanificacionesPage() {
     }
   )
 
-  // 1. CARGA INICIAL: FILTRAR CLUBES POR PERMISO DEL PROFESOR LOGUEADO
   const [todosLosAlumnosMaestro, setTodosLosAlumnosMaestro] = useState<any[]>([])
-
+  // 1. CARGA INICIAL: FILTRAR CLUBES POR PERMISO DEL PROFESOR LOGUEADO
   useEffect(() => {
     async function inicializarModuloFiltrado() {
       setCargandoBase(true)
@@ -92,6 +91,7 @@ export default function PlanificacionesPage() {
     }
     inicializarModuloFiltrado()
   }, [supabase])
+
   // 2. BUSCAR EQUIPOS FILTRADOS ESTRICTAMENTE POR SUS CATEGORÍAS ASIGNADAS
   useEffect(() => {
     if (!clubSeleccionado) {
@@ -148,7 +148,6 @@ export default function PlanificacionesPage() {
     }
     cargarJugadoresFiltrados()
   }, [clubSeleccionado, equipoSeleccionado, supabase])
-
   // 4. AUTOMATIZACIÓN: CALCULAR EL PRÓXIMO NÚMERO DE ENTRENAMIENTO CORRELATIVO
   useEffect(() => {
     if (!clubSeleccionado || !equipoSeleccionado) return
@@ -163,8 +162,9 @@ export default function PlanificacionesPage() {
         .limit(1)
 
       if (data && data.length > 0) {
-        const ultimoNumero = data?.numero_entrenamiento || data[0]?.numero_entrenamiento || 0
-        const siguienteNumero = parseInt(ultimoNumero) + 1
+        // CORREGIDO: Acceso seguro mediante casting para evitar error TS2339 en arrays de Supabase
+        const ultimoNumero = (data as any)[0]?.numero_entrenamiento || 0
+        const siguienteNumero = parseInt(ultimoNumero.toString()) + 1
         setNumeroEntrenamiento(siguienteNumero.toString())
       } else {
         setNumeroEntrenamiento('1')
@@ -194,7 +194,6 @@ export default function PlanificacionesPage() {
   const quitarEjercicioRutina = (id: string) => {
     setEjerciciosSeleccionados(prev => prev.filter(item => item.id !== id))
   }
-
   // 5. FUNCIÓN DE GUARDADO COMPLETO RE-ALINEADO CON SINTAXIS REMOTA
   const handleGuardarTodo = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -227,8 +226,9 @@ export default function PlanificacionesPage() {
 
       if (errorInyeccionTablaEntrenamientos) throw errorInyeccionTablaEntrenamientos
       if (!insertoPlanifExito || insertoPlanifExito.length === 0) throw new Error('No se pudo recuperar la fila generada')
-      
-      const nuevoEntrenamientoId = insertoPlanifExito[0]?.id || insertoPlanifExito.id
+
+      // CORREGIDO: Se extrae el id desde el primer objeto obtenido de Supabase mediante casting seguro (evita error TS2339 en Vercel)
+      const nuevoEntrenamientoId = (insertoPlanifExito as any)[0]?.id || (insertoPlanifExito as any)?.id
 
       if (ejerciciosSeleccionados.length > 0) {
         const filasEjercicios = ejerciciosSeleccionados.map((ej, idx) => ({
@@ -351,10 +351,8 @@ export default function PlanificacionesPage() {
                 {ejerciciosFiltradosCatalogo.map((ej) => (
                   <div key={ej.id} className="bg-neutral-950 border border-neutral-800/60 p-3 rounded-xl flex flex-col justify-between items-start gap-2.5 hover:border-neutral-700 transition-all">
                     <div className="w-full space-y-2">
-                      {/* Renglón Superior con título compacto */}
                       <div className="flex items-center gap-2 border-b border-neutral-900 pb-1.5 w-full">
                         <span className="bg-neutral-900 border border-neutral-800 text-neutral-500 font-mono text-[8px] font-bold px-1 py-0.2 rounded">[{ej.codigo || 'KEE'}]</span>
-                        {/* Achicamos la tipografía del nombre aquí también */}
                         <h3 className="font-bold text-[11px] text-neutral-300 truncate flex-1" title={ej.nombre}>{ej.nombre}</h3>
                         
                         {ej.multimedia_url && (
@@ -369,7 +367,6 @@ export default function PlanificacionesPage() {
                       
                       <p className="text-[9px] text-neutral-500">Objetivo: <span className="text-emerald-400/90 font-semibold">{ej.objetivos || ej.subrubro || 'General'}</span></p>
                       
-                      {/* Caja de Desarrollo Técnico Ampliada */}
                       {ej.desarrollo && (
                         <div className="text-xs text-neutral-300 bg-neutral-900 p-2.5 rounded-lg border border-neutral-800/40 text-left font-medium leading-relaxed select-text">
                           <div className="text-[9px] uppercase tracking-wider text-neutral-500 font-bold mb-1">Análisis Técnico:</div>
@@ -389,9 +386,6 @@ export default function PlanificacionesPage() {
               </div>
             )}
           </div>
-
-
-
           {/* PANEL 2: VISOR INTERACTIVO DE LA RUTINA DEL DÍA */}
           <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 h-[550px] flex flex-col overflow-hidden shadow-xl">
             <div className="text-xs font-bold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-3 shrink-0">

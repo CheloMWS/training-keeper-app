@@ -172,13 +172,15 @@ export default function CentroReportesPage() {
             a => a.entrenamiento_id === entrenam.id && a.presente
           )
 
-          // Si el jugador elegido estuvo presente (o si hay alumnos presentes en el plantel), sumamos la carga táctica
+   // Si el jugador elegido estuvo presente (o si hay alumnos presentes en el plantel), sumamos la carga táctica
           if (alumnosPresentesEseDia.length > 0) {
             const ejerciciosDeEstaFecha = rutinaEjercicios.filter(re => re.entrenamiento_id === entrenam.id)
 
             ejerciciosDeEstaFecha.forEach(ejer => {
-              const nombreEj = ejer.ejercicios?.nombre || 'Ejercicio sin nombre'
-              const objetivoEj = ejer.ejercicios?.objetivos || ejer.ejercicios?.subrubro || 'General / No especificado'
+              // CORREGIDO: Se usa un casteo a any para acceder de forma segura a las propiedades del objeto individual
+              const datosEjercicio = ejer.ejercicios as any
+              const nombreEj = datosEjercicio?.nombre || 'Ejercicio sin nombre'
+              const objetivoEj = datosEjercicio?.objetivos || datosEjercicio?.subrubro || 'General / No especificado'
               const minutos = ejer.duracion_minutos || 0
 
               // Insertamos el detalle de la fecha individual
@@ -187,7 +189,8 @@ export default function CentroReportesPage() {
                 ejercicio: nombreEj,
                 objetivo: objetivoEj,
                 minutos: minutos,
-                alumnos: alumnosPresentesEseDia.map(a => a.alumnos?.nombre_completo).join(', ')
+                // CORREGIDO: Casteo a any para asegurar que lea 'nombre_completo' sin interpretar que es un array
+                alumnos: alumnosPresentesEseDia.map(a => (a.alumnos as any)?.nombre_completo).filter(Boolean).join(', ')
               })
 
               // Acumulamos los totales agrupados por objetivo
@@ -205,7 +208,8 @@ export default function CentroReportesPage() {
         
         const resumenAsistencia = listaIdsAlumnos.map(alId => {
           const registrosDelAlumno = controlAsistencia.filter(a => a.alumno_id === alId)
-          const nombreCom = registrosDelAlumno[0]?.alumnos?.nombre_completo || 'Arquero Desconocido'
+          // CORREGIDO: Se aplica el casteo a any en el primer elemento del array para extraer 'nombre_completo'
+          const nombreCom = (registrosDelAlumno[0]?.alumnos as any)?.nombre_completo || 'Arquero Desconocido'
           
           const totales = registrosDelAlumno.length
           const presentes = registrosDelAlumno.filter(a => a.presente).length
