@@ -231,6 +231,34 @@ export default function HistorialPlanificacionesPage() {
   const quitarEjercicioEdicion = (ejercicioId: string) => {
     setRutinaDetalle(prev => prev.filter(item => item.ejercicio_id !== ejercicioId))
   }
+  // NUEVO: Permite inyectar un ejercicio del catálogo a la rutina que estás editando
+  const agregarEjercicioEdicion = (ejElegido: any) => {
+    const ejId = ejElegido.id
+    // Validamos si ya existe en la rutina actual de este entrenamiento
+    const yaExiste = rutinaDetalle.some(item => (item.ejercicio_id || item.id) === ejId)
+    
+    if (yaExiste) {
+      alert('Este ejercicio ya se encuentra cargado en esta rutina.')
+      return
+    }
+
+    // Lo agregamos simulando la estructura que trae Supabase originalmente
+    setRutinaDetalle(prev => [
+      ...prev, 
+      {
+        ejercicio_id: ejId,
+        duracion_minutos: 15, // tiempo base por defecto
+        ejercicios: {
+          codigo: ejElegido.codigo || 'KEE',
+          nombre: ejElegido.nombre,
+          objetivos: ejElegido.objetivos,
+          subrubro: ejElegido.subrubro,
+          multimedia_url: ejElegido.multimedia_url,
+          desarrollo: ejElegido.desarrollo
+        }
+      }
+    ])
+  }
 
   const conmutarAsistenciaEdicion = (alumnoId: string) => {
     setAsistenciaDetalle(prev => prev.map(item => (item.alumno_id === alumnoId) ? { ...item, presente: !item.presente } : item))
@@ -428,10 +456,52 @@ export default function HistorialPlanificacionesPage() {
                       />
                     </div>
                   </div>
-                    {/* Bloque 2: Cronograma de Ejercicios */}
+                      {/* Bloque 2: Cronograma de Ejercicios */}
                   <div className="space-y-2">
-                    <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">📋 Cronograma de Ejercicios y Tiempos</div>
-                    
+                    <div className="flex justify-between items-center border-b border-neutral-800 pb-2 mb-2">
+                      <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">📋 Cronograma de Ejercicios y Tiempos</div>
+                      
+                      {/* >>> SELECTOR COMPACTO PARA AÑADIR EN CALIENTE EN EL HISTORIAL <<< */}
+                      {isEditing && (
+                        <select
+                          onChange={(e) => {
+                            const idEncontrado = e.target.value
+                            if (!idEncontrado) return
+                            const objetoCatalogo = ejerciciosCatalogo.find(x => x.id === idEncontrado)
+                            if (objetoCatalogo) {
+                              const yaExiste = rutinaDetalle.some(item => (item.ejercicio_id || item.id) === idEncontrado)
+                              if (yaExiste) {
+                                alert('Este ejercicio ya se encuentra cargado en esta rutina.')
+                                return
+                              }
+                              setRutinaDetalle(prev => [
+                                ...prev, 
+                                {
+                                  ejercicio_id: idEncontrado,
+                                  duracion_minutos: 15,
+                                  ejercicios: {
+                                    codigo: objetoCatalogo.codigo || 'KEE',
+                                    nombre: objetoCatalogo.nombre,
+                                    objetivos: objetoCatalogo.objetivos,
+                                    subrubro: objetoCatalogo.subrubro,
+                                    multimedia_url: objetoCatalogo.multimedia_url,
+                                    desarrollo: objetoCatalogo.desarrollo
+                                  }
+                                }
+                              ])
+                            }
+                            e.target.value = "" // Resetea el selector
+                          }}
+                          className="text-[11px] bg-neutral-950 border border-neutral-800 text-emerald-400 font-bold p-1.5 rounded-lg focus:outline-none cursor-pointer max-w-[220px]"
+                        >
+                          <option value="">➕ Agregar Ejercicio...</option>
+                          {ejerciciosCatalogo.map(ej => (
+                            <option key={ej.id} value={ej.id}>{ej.nombre}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+    
                     {rutinaDetalle.length === 0 ? (
                       <div className="text-neutral-600 bg-neutral-950/40 text-xs italic py-4 text-center rounded-lg border border-neutral-800/40">Sin ejercicios cargados en la rutina.</div>
                     ) : (
@@ -447,12 +517,10 @@ export default function HistorialPlanificacionesPage() {
 
                           return (
                             <div key={index} className="bg-neutral-950 border border-neutral-800/80 p-3 rounded-xl flex flex-col gap-2.5 shadow-sm">
-                              {/* Renglón Superior: Título ultra compacto y Controles */}
                               <div className="flex items-center justify-between gap-4 w-full border-b border-neutral-900 pb-1.5">
                                 <div className="space-y-0.5 truncate flex-1">
                                   <div className="flex items-center gap-1.5 truncate">
                                     <span className="bg-neutral-900 border border-neutral-800 text-neutral-500 font-mono font-extrabold px-1.5 py-0.2 rounded text-[8px]">[{codEj}]</span>
-                                    {/* Achicamos la tipografía del nombre para liberar espacio */}
                                     <span className="font-bold text-neutral-300 text-[11px] truncate" title={nombreEj}>{nombreEj}</span>
                                   </div>
                                   <p className="text-[9px] text-neutral-500">Objetivo: <span className="text-neutral-400 font-medium">{objEj}</span></p>
@@ -488,7 +556,6 @@ export default function HistorialPlanificacionesPage() {
                                 </div>
                               </div>
 
-                              {/* Caja de Desarrollo Técnico: Ahora Más Grande, Cómoda y Legible */}
                               {textoDesarrollo && (
                                 <div className="text-xs text-neutral-300 bg-neutral-900 p-2.5 rounded-lg border border-neutral-800/50 text-left font-medium leading-relaxed">
                                   <div className="text-[9px] uppercase tracking-wider text-neutral-500 font-bold mb-1">📝 Consigna de Ejecución:</div>
@@ -501,7 +568,6 @@ export default function HistorialPlanificacionesPage() {
                       </div>
                     )}
                   </div>
-
                   {/* Bloque 3: Control de Asistencia del Plantel */}
                   <div className="space-y-2">
                     <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">👥 Asistencia del Plantel e Invitados</div>
@@ -550,5 +616,3 @@ export default function HistorialPlanificacionesPage() {
     </div>
   )
 }
-
-

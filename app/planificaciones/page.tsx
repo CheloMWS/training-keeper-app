@@ -208,7 +208,31 @@ export default function PlanificacionesPage() {
       const rawFecha = target.fecha?.value || new Date().toISOString().split('T')[0]
       const stringObjetivo = target.objetivo?.value || target.objetivo_sesion?.value || objetivoSesion || 'General táctico'
       const stringObs = observacionesGlobales || ''
+      // ====================================================================
+      // COMIENZA NUEVO CÓDIGO DE VALIDACIÓN (AÑADIR AQUÍ)
+      // ====================================================================
+      const { data: existente, error: errorValidacion } = await supabase
+        .from('entrenamientos')
+        .select('id')
+        .eq('fecha', rawFecha)
+        .eq('club', clubSeleccionado)
+        .eq('categoria', equipoSeleccionado)
+        .limit(1)
 
+      if (errorValidacion) console.error("Error al validar duplicado:", errorValidacion)
+
+      if (existente && existente.length > 0) {
+        const proceder = confirm(
+          `⚠️ Ya existe una planificación registrada para la fecha ${rawFecha}, club "${clubSeleccionado}" y categoría "${equipoSeleccionado}".\n\n¿Deseas guardar otra planificación de todas formas?`
+        )
+        if (!proceder) {
+          setGuardando(false)
+          return // Detiene el código si el usuario presiona "Cancelar"
+        }
+      }
+      // ====================================================================
+      // TERMINA NUEVO CÓDIGO DE VALIDACIÓN
+      // ====================================================================
       const { data: insertoPlanifExito, error: errorInyeccionTablaEntrenamientos } = await supabase
         .from('entrenamientos')
         .insert([
