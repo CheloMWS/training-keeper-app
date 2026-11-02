@@ -32,6 +32,11 @@ export default function PlanificacionesPage() {
   const [cargandoBase, setCargandoBase] = useState(true)
   const [guardando, setGuardando] = useState(false)
 
+  // --- NUEVOS ESTADOS PARA SUMAR ALUMNOS DE OTROS EQUIPOS ---
+  const [todosLosAlumnosMaestro, setTodosLosAlumnosMaestro] = useState<any[]>([])
+  const [busquedaExterno, setBusquedaExterno] = useState('')
+  const [mostrarDropdownExternos, setMostrarDropdownExternos] = useState(false)
+
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -40,7 +45,6 @@ export default function PlanificacionesPage() {
     }
   )
 
-  const [todosLosAlumnosMaestro, setTodosLosAlumnosMaestro] = useState<any[]>([])
   // 1. CARGA INICIAL: FILTRAR CLUBES POR PERMISO DEL PROFESOR LOGUEADO
   useEffect(() => {
     async function inicializarModuloFiltrado() {
@@ -91,7 +95,6 @@ export default function PlanificacionesPage() {
     }
     inicializarModuloFiltrado()
   }, [supabase])
-
   // 2. BUSCAR EQUIPOS FILTRADOS ESTRICTAMENTE POR SUS CATEGORÍAS ASIGNADAS
   useEffect(() => {
     if (!clubSeleccionado) {
@@ -148,6 +151,7 @@ export default function PlanificacionesPage() {
     }
     cargarJugadoresFiltrados()
   }, [clubSeleccionado, equipoSeleccionado, supabase])
+
   // 4. AUTOMATIZACIÓN: CALCULAR EL PRÓXIMO NÚMERO DE ENTRENAMIENTO CORRELATIVO
   useEffect(() => {
     if (!clubSeleccionado || !equipoSeleccionado) return
@@ -162,7 +166,6 @@ export default function PlanificacionesPage() {
         .limit(1)
 
       if (data && data.length > 0) {
-        // CORREGIDO: Acceso seguro mediante casting para evitar error TS2339 en arrays de Supabase
         const ultimoNumero = (data as any)[0]?.numero_entrenamiento || 0
         const siguienteNumero = parseInt(ultimoNumero.toString()) + 1
         setNumeroEntrenamiento(siguienteNumero.toString())
@@ -194,6 +197,19 @@ export default function PlanificacionesPage() {
   const quitarEjercicioRutina = (id: string) => {
     setEjerciciosSeleccionados(prev => prev.filter(item => item.id !== id))
   }
+
+  // FUNCIÓN PARA SUMAR JUGADOR DE OTRO EQUIPO/CLUB
+  const agregarJugadorExterno = (alumno: any) => {
+    const yaExiste = arquerosFiltrados.some(arq => arq.id === alumno.id)
+    if (yaExiste) {
+      alert('Este jugador ya se encuentra agregado en la lista actual.')
+      return
+    }
+    setArquerosFiltrados(prev => [...prev, alumno])
+    setAsistencia(prev => ({ ...prev, [alumno.id]: true }))
+    setBusquedaExterno('')
+    setMostrarDropdownExternos(false)
+  }
   // 5. FUNCIÓN DE GUARDADO COMPLETO RE-ALINEADO CON SINTAXIS REMOTA
   const handleGuardarTodo = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -208,9 +224,7 @@ export default function PlanificacionesPage() {
       const rawFecha = target.fecha?.value || new Date().toISOString().split('T')[0]
       const stringObjetivo = target.objetivo?.value || target.objetivo_sesion?.value || objetivoSesion || 'General táctico'
       const stringObs = observacionesGlobales || ''
-      // ====================================================================
-      // COMIENZA NUEVO CÓDIGO DE VALIDACIÓN (AÑADIR AQUÍ)
-      // ====================================================================
+
       const { data: existente, error: errorValidacion } = await supabase
         .from('entrenamientos')
         .select('id')
@@ -227,12 +241,10 @@ export default function PlanificacionesPage() {
         )
         if (!proceder) {
           setGuardando(false)
-          return // Detiene el código si el usuario presiona "Cancelar"
+          return
         }
       }
-      // ====================================================================
-      // TERMINA NUEVO CÓDIGO DE VALIDACIÓN
-      // ====================================================================
+
       const { data: insertoPlanifExito, error: errorInyeccionTablaEntrenamientos } = await supabase
         .from('entrenamientos')
         .insert([
@@ -251,7 +263,6 @@ export default function PlanificacionesPage() {
       if (errorInyeccionTablaEntrenamientos) throw errorInyeccionTablaEntrenamientos
       if (!insertoPlanifExito || insertoPlanifExito.length === 0) throw new Error('No se pudo recuperar la fila generada')
 
-      // CORREGIDO: Se extrae el id desde el primer objeto obtenido de Supabase mediante casting seguro (evita error TS2339 en Vercel)
       const nuevoEntrenamientoId = (insertoPlanifExito as any)[0]?.id || (insertoPlanifExito as any)?.id
 
       if (ejerciciosSeleccionados.length > 0) {
@@ -289,6 +300,16 @@ export default function PlanificacionesPage() {
       setGuardando(false)
     }
   }
+
+  // Filtrado de alumnos sugeridos que pertenecen a OTROS equipos o categorías
+  const sugerenciasAlumnosExternos = busquedaExterno.trim() === ''
+    ? []
+    : todosLosAlumnosMaestro.filter(alumno => {
+        const coincideFiltro = alumno.nombre_completo.toLowerCase().includes(busquedaExterno.toLowerCase()) ||
+                              (alumno.club && alumno.club.toLowerCase().includes(busquedaExterno.toLowerCase()))
+        const esDelEquipoActual = alumno.club === clubSeleccionado && alumno.categoria === equipoSeleccionado
+        return coincideFiltro && !esDelEquipoActual
+      }).slice(0, 5)
 
   const ejerciciosFiltradosCatalogo = filtroObjetivo
     ? ejerciciosCatalogo.filter(e => e.objetivos === filtroObjetivo || e.subrubro === filtroObjetivo)
@@ -351,7 +372,6 @@ export default function PlanificacionesPage() {
 
         {/* CUERPO CENTRAL DE REPARTO: TRES PANELES VERTICALES */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-          
           {/* PANEL 1: CATÁLOGO MAESTRO DE EJERCICIOS */}
           <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 h-[550px] flex flex-col overflow-hidden shadow-xl">
             <div className="space-y-2 mb-3 shrink-0">
@@ -455,10 +475,9 @@ export default function PlanificacionesPage() {
               </div>
             )}
           </div>
-
-          {/* PANEL 3: ASISTENCIA OFICIAL DEL PLANTEL */}
+          {/* PANEL 3: ASISTENCIA OFICIAL DEL PLANTEL + INVITADOS */}
           <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 h-[550px] flex flex-col overflow-hidden shadow-xl">
-            <div className="text-xs font-bold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-3 shrink-0">
+            <div className="text-xs font-bold text-neutral-400 uppercase tracking-wider border-b border-neutral-800 pb-2 mb-2 shrink-0">
               👥 Asistencia diaria de los Arqueros ({arquerosFiltrados.length})
             </div>
 
@@ -467,37 +486,91 @@ export default function PlanificacionesPage() {
                 <span>👥</span>
                 Selecciona un Club y Categoría arriba para descargar el listado oficial de arqueros.
               </div>
-            ) : arquerosFiltrados.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center text-neutral-600 text-xs italic text-center p-6">
-                No se registran alumnos dados de alta en este plantel.
-              </div>
             ) : (
               <div className="flex-1 flex flex-col justify-between overflow-hidden">
-                <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                  {arquerosFiltrados.map((arq) => (
-                    <div 
-                      key={arq.id} 
-                      onClick={() => toggleAsistencia(arq.id)}
-                      className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs cursor-pointer transition-all ${
-                        asistencia[arq.id] 
-                          ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400 shadow-sm' 
-                          : 'bg-red-950/20 border-red-900/40 text-red-400 opacity-60'
-                      }`}
-                    >
-                      <span className="font-bold truncate max-w-[170px]">{arq.nombre_completo}</span>
-                      <span className={`font-mono text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border shrink-0 ${
-                        asistencia[arq.id]
-                          ? 'bg-emerald-950 text-emerald-400 border-emerald-800/40'
-                          : 'bg-red-950 text-red-400 border-red-900/40'
-                      }`}>
-                        {asistencia[arq.id] ? 'Presente' : 'Ausente'}
-                      </span>
+                
+                {/* BUSCADOR INTERACTIVO PARA SUMAR ALUMNOS DE OTROS EQUIPOS */}
+                <div className="mb-3 relative shrink-0">
+                  <input
+                    type="text"
+                    placeholder="🔍 Sumar jugador de otro equipo/club..."
+                    value={busquedaExterno}
+                    onChange={(e) => {
+                      setBusquedaExterno(e.target.value)
+                      setMostrarDropdownExternos(true)
+                    }}
+                    onFocus={() => setMostrarDropdownExternos(true)}
+                    className="w-full text-xs rounded-lg border border-neutral-800 bg-neutral-950 p-2 text-neutral-200 focus:outline-none focus:border-emerald-500/50 placeholder-neutral-500"
+                  />
+                  {mostrarDropdownExternos && sugerenciasAlumnosExternos.length > 0 && (
+                    <div className="absolute z-50 left-0 right-0 mt-1 bg-neutral-900 border border-neutral-800 rounded-lg shadow-xl overflow-hidden max-h-40 overflow-y-auto">
+                      {sugerenciasAlumnosExternos.map((alumno) => (
+                        <button
+                          key={alumno.id}
+                          type="button"
+                          onClick={() => agregarJugadorExterno(alumno)}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-neutral-800 transition-colors flex justify-between items-center border-b border-neutral-950 last:border-0"
+                        >
+                          <div>
+                            <p className="font-semibold text-neutral-200">{alumno.nombre_completo}</p>
+                            <p className="text-[10px] text-neutral-500">{alumno.categoria} • {alumno.club || 'Sin Club'}</p>
+                          </div>
+                          <span className="text-[10px] text-emerald-400 bg-emerald-950/40 border border-emerald-800/30 px-1.5 py-0.5 rounded font-bold">
+                            + Invitar
+                          </span>
+                        </button>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                  {mostrarDropdownExternos && busquedaExterno.trim() !== '' && sugerenciasAlumnosExternos.length === 0 && (
+                    <div className="absolute z-50 left-0 right-0 mt-1 bg-neutral-900 border border-neutral-800 rounded-lg p-2 text-center text-xs text-neutral-500">
+                      No se encontraron alumnos de otros equipos.
+                    </div>
+                  )}
                 </div>
 
+                {/* LISTADO DE ARQUEROS */}
+                {arquerosFiltrados.length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center text-neutral-600 text-xs italic text-center p-6">
+                    No se registran alumnos dados de alta en este plantel.
+                  </div>
+                ) : (
+                  <div className="flex-1 overflow-y-auto space-y-2 pr-1" onClick={() => setMostrarDropdownExternos(false)}>
+                    {arquerosFiltrados.map((arq) => {
+                      const esExterno = arq.club !== clubSeleccionado || arq.categoria !== equipoSeleccionado
+                      return (
+                        <div 
+                          key={arq.id} 
+                          onClick={() => toggleAsistencia(arq.id)}
+                          className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs cursor-pointer transition-all ${
+                            asistencia[arq.id] 
+                              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400 shadow-sm' 
+                              : 'bg-red-950/20 border-red-900/40 text-red-400 opacity-60'
+                          }`}
+                        >
+                          <div className="truncate max-w-[160px] space-y-0.5">
+                            <p className="font-bold truncate">{arq.nombre_completo}</p>
+                            {esExterno && (
+                              <p className="text-[9px] text-amber-400/90 font-medium font-mono uppercase tracking-tight">
+                                🌟 {arq.club || 'Invitado'} ({arq.categoria})
+                              </p>
+                            )}
+                          </div>
+                          <span className={`font-mono text-[9px] uppercase font-bold px-1.5 py-0.5 rounded border shrink-0 ${
+                            asistencia[arq.id]
+                              ? 'bg-emerald-950 text-emerald-400 border-emerald-800/40'
+                              : 'bg-red-950 text-red-400 border-red-900/40'
+                          }`}>
+                            {asistencia[arq.id] ? 'Presente' : 'Ausente'}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
                 {/* Campos de texto complementarios antes de guardar */}
-                <div className="border-t border-neutral-800/60 pt-3 mt-3 space-y-3 bg-neutral-900 shrink-0">
+                <div className="border-t border-neutral-800/60 pt-3 mt-3 space-y-3 bg-neutral-900 shrink-0" onClick={() => setMostrarDropdownExternos(false)}>
                   <div>
                     <label className="text-[10px] text-neutral-500 uppercase block mb-1 font-semibold">Foco General (Objetivo de la Sesión)</label>
                     <input
@@ -531,3 +604,4 @@ export default function PlanificacionesPage() {
     </div>
   )
 }
+
