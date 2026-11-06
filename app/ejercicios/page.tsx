@@ -20,21 +20,30 @@ export default function CargarEjercicio() {
   const [rubrosDB, setRubrosDB] = useState<any[]>([]);
   const [subrubrosDB, setSubrubrosDB] = useState<any[]>([]);
   const [objetivosFiltrados, setObjetivosFiltrados] = useState<any[]>([]); // ← Lista reactiva limpia
+  
+  // ID del usuario logueado para cumplir con la integridad de la base de datos
+  const [userId, setUserId] = useState<string | null>(null);
 
   const [cargando, setCargando] = useState(false);
   const [mensaje, setMensaje] = useState({ tipo: '', texto: '' });
 
-  // 1. CARGAR LOS RUBROS Y OBJETIVOS DESDE LAS TABLAS MAESTRAS
+  // 1. CARGAR LOS RUBROS, OBJETIVOS Y USUARIO ACTUAL DESDE SUPABASE
   useEffect(() => {
-    const descargarFiltros = async () => {
+    const descargarDatosIniciales = async () => {
       const { data: rubros } = await supabase.from('rubros').select('*');
       const { data: subrubros } = await supabase.from('subrubros').select('*'); // Mantiene lectura de tu tabla actual
 
       if (rubros) setRubrosDB(rubros);
       if (subrubros) setSubrubrosDB(subrubros);
+
+      // Obtener la sesión del usuario actual
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setUserId(user.id);
+      }
     };
 
-    descargarFiltros();
+    descargarDatosIniciales();
   }, []);
 
   // 2. EFECTO REACTIVO: Filtra los objetivos de la lista según el rubro táctico elegido
@@ -76,7 +85,9 @@ export default function CargarEjercicio() {
             multimedia_url: formData.multimedia_url.trim(),
             // Inyectamos el valor en espejo en ambos campos para sincronía total con dBeaver
             subrubro: formData.objetivo,
-            objetivos: formData.objetivo
+            objetivos: formData.objetivo,
+            // Inyectamos el identificador del usuario que crea el registro
+            user_id: userId 
           }
         ]);
 
@@ -205,5 +216,4 @@ export default function CargarEjercicio() {
     </div>
   );
 }
-
 
